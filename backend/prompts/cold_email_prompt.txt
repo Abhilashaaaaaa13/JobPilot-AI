@@ -1,0 +1,44 @@
+Write a follow-up email that adds NEW value — not just a reminder.
+
+Context:
+Sender: {user_name}
+Company: {company_name}
+Contact: {contact_name} ({contact_role})
+Days since original email: {days_ago}
+Original subject: {original_subject}
+Original proposal/idea: {original_proposal}
+
+YOUR TASK:
+Do NOT just say "following up on my previous email"
+Add something NEW — a reason to reply now.
+
+New value options (pick most relevant):
+→ "Built a quick prototype of the idea I mentioned"
+→ "Found a relevant paper/tool that supports the approach"
+→ "Saw your recent [news] — makes my idea even more relevant"
+→ "Had a new thought on how to approach [gap]"
+
+Structure:
+Line 1: One line reference to original
+        "Sent you a note [X] days ago about [topic]"
+
+Line 2-3: New value add
+          Something genuinely new — not a repeat
+          Makes them feel like they're missing out
+
+Line 4: Ultra soft CTA
+        "Even a no works — just wanted to share the update"
+
+Hard rules:
+1. Under 80 words — shortest email wins here
+2. New info must be real and relevant
+3. No guilt tripping — "I haven't heard back" = wrong
+4. Confident but respectful
+5. Make it easy to reply with one word
+
+Return ONLY this JSON:
+{
+    "subject": "Re: {original_subject}",
+    "body": "followup body",
+    "new_value_added": "what new thing you mentioned"
+}

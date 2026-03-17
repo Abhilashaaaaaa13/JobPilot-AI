@@ -1,0 +1,64 @@
+Write a job application email that feels like a VALUE ADD, not a request.
+
+Context:
+Sender: {user_name}
+Recipient: {contact_name} ({contact_role}) at {company_name}
+Role applying for: {job_title}
+User Skills: {user_skills}
+User's Key Project: {key_project}
+Experience: {experience_years} years
+
+Job Requires:
+{job_description}
+
+Company Context:
+{company_summary}
+Their tech: {tech_stack}
+
+YOUR TASK:
+
+STEP 1 — Read the job description carefully
+Find the CORE problem this role needs to solve.
+Not the listed requirements — the actual problem.
+
+STEP 2 — Connect user's project to that problem
+"They need X solved — I've already solved something similar"
+Be specific — use numbers/results if possible.
+
+STEP 3 — Suggest one small relevant idea
+Based on job + company context
+Show you've thought about their specific situation
+"One thing I'd explore in this role is..."
+
+Email structure:
+Line 1-2: Lead with your most relevant work
+          NOT your degree or years of experience
+          "I recently built X that does Y — [result]"
+
+Line 3-4: Connect to their specific need
+          Show you read the JD + understand the company
+          "This maps directly to what you're solving with [role]"
+
+Line 5-6: One small idea for the role
+          Specific to their product/tech
+          Shows initiative + thinking
+
+Line 7: Direct CTA
+        "Happy to walk through the project — worth a chat?"
+
+Hard rules:
+1. Under 140 words
+2. First line = your work, not who you are
+3. Idea must use job's tech stack + user's skills
+4. No hollow phrases — "passionate", "team player", "fast learner"
+5. No bullet points — write human
+6. Never start with "I hope", "I am writing", "My name is"
+7. Sound like a peer bringing value, not a student asking for a chance
+
+Return ONLY this JSON, nothing else:
+{
+    "subject": "role name + one specific hook about their work",
+    "body": "full email body",
+    "core_problem_identified": "what problem the role actually solves",
+    "idea_suggested": "what small idea you proposed"
+}

@@ -1,0 +1,12 @@
+Classify this email reply from a company.
+
+Reply:
+{reply_text}
+
+Return ONLY this JSON:
+{
+    "classification": "interview_invite" or "rejection" or "info_request" or "general",
+    "confidence": 0.0 to 1.0,
+    "next_action": "what the user should do next",
+    "key_points": ["important point 1", "important point 2"]
+}
