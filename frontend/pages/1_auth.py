@@ -1,51 +1,98 @@
-# frontend/pages/1_auth.py
-
+# Pehle — requests se API call
+# Ab — direct DB call
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 import streamlit as st
-import requests
+from backend.database import SessionLocal
+from backend.models.user import User
+from backend.utils.auth_utils import (
+    hash_password,
+    verify_password
+)
 
-API = "http://localhost:8000"
+def register_user(email: str, password: str) -> tuple:
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(
+            User.email == email
+        ).first()
+        if existing:
+            return False, "Email already registered"
 
+        user = User(
+            email           = email,
+            hashed_password = hash_password(password)
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return True, user
+    except Exception as e:
+        db.rollback()
+        return False, str(e)
+    finally:
+        db.close()
+
+
+def login_user(email: str, password: str) -> tuple:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(
+            User.email == email
+        ).first()
+
+        if not user or not verify_password(
+            password, user.hashed_password
+        ):
+            return False, "Invalid email or password"
+
+        if not user.is_active:
+            return False, "Account inactive"
+
+        return True, user
+    except Exception as e:
+        return False, str(e)
+    finally:
+        db.close()
+
+
+# ── UI ────────────────────────────────────────
 st.title("🤖 Job Hunter Agent")
 
 tab1, tab2 = st.tabs(["Login", "Register"])
 
-# ── Register ──────────────────────────────────
 with tab2:
     st.subheader("Create Account")
-    email    = st.text_input("Email",    key="reg_email")
-    password = st.text_input("Password", key="reg_pass", type="password")
+    reg_email = st.text_input("Email",    key="reg_email")
+    reg_pass  = st.text_input("Password", key="reg_pass",
+                               type="password")
 
     if st.button("Register"):
-        res = requests.post(f"{API}/auth/register", json={
-            "email"   : email,
-            "password": password
-        })
-        if res.status_code == 200:
-            st.success(" Account created — ab login karo")
+        if not reg_email or not reg_pass:
+            st.error("Email aur password daalo")
         else:
-            st.error(res.json().get("detail", "Error"))
+            success, result = register_user(reg_email, reg_pass)
+            if success:
+                st.success("✅ Account created — ab login karo")
+            else:
+                st.error(result)
 
-# ── Login ─────────────────────────────────────
 with tab1:
     st.subheader("Login")
-    email    = st.text_input("Email",    key="login_email")
-    password = st.text_input("Password", key="login_pass", type="password")
+    login_email = st.text_input("Email",    key="login_email")
+    login_pass  = st.text_input("Password", key="login_pass",
+                                 type="password")
 
     if st.button("Login"):
-        res = requests.post(f"{API}/auth/login", json={
-            "email"   : email,
-            "password": password
-        })
-        if res.status_code == 200:
-            data = res.json()
-            # Session state mein save karo
-            # Why session_state?
-            # Streamlit har interaction pe rerun hota hai
-            # session_state values persist karti hain
-            st.session_state["token"]   = data["access_token"]
-            st.session_state["user_id"] = data["user_id"]
-            st.session_state["email"]   = data["email"]
-            st.success(" Login successful")
-            st.switch_page("pages/2_onboarding.py")
+        if not login_email or not login_pass:
+            st.error("Email aur password daalo")
         else:
-            st.error("Invalid email or password")
+            success, result = login_user(login_email, login_pass)
+            if success:
+                st.session_state["user_id"] = result.id
+                st.session_state["email"]   = result.email
+                st.success("✅ Login successful!")
+                st.switch_page("pages/2_onboarding.py")
+            else:
+                st.error(result)
