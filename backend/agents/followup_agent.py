@@ -1,144 +1,177 @@
 # backend/agents/followup_agent.py
-# Auto follow-up bhejo
-# 4 din baad agar reply nahi aaya
 
+import os
+import json
 from datetime import datetime, timedelta
-from sqlalchemy.orm import Session
-from backend.models.application import Application
-from backend.models.user import UserProfile, User
-from backend.agents.email_generator import generate_followup_email
-from backend.agents.email_sender import send_email, get_gmail_credentials
-from backend.config import MAX_FOLLOWUPS
-from loguru import logger
+from loguru   import logger
+from dotenv   import load_dotenv
+load_dotenv()
+
+FOLLOWUP_AFTER_DAYS = int(os.getenv("FOLLOWUP_AFTER_DAYS", 4))
+MAX_FOLLOWUPS       = int(os.getenv("MAX_FOLLOWUPS",        2))
 
 
-def check_and_send_followups(
-    db      : Session,
-    user_id : int
-) -> dict:
+def get_sent_log(user_id: int) -> list:
+    log_file = f"uploads/{user_id}/sent_emails/log.json"
+    if not os.path.exists(log_file):
+        return []
+    try:
+        with open(log_file, "r") as f:
+            return json.load(f)
+    except:
+        return []
+
+
+def save_sent_log(user_id: int, log: list):
+    log_dir  = f"uploads/{user_id}/sent_emails"
+    log_file = f"{log_dir}/log.json"
+    os.makedirs(log_dir, exist_ok=True)
+    with open(log_file, "w") as f:
+        json.dump(log, f, indent=2)
+
+
+def check_and_send_followups(user_id: int) -> dict:
     """
-    Follow-up bhejne ki logic:
-
-    1. Applications dhundho jo:
-       → email_sent status hai
-       → X din se purani hai (user setting)
-       → Max followups nahi bheje
-
-    2. Har ek ke liye:
-       → Follow-up email generate karo
-       → Gmail se bhejo
-       → Status + count update karo
-
-    Why max 2 followups?
-    Zyada follow-up = annoying = spam mark.
-    2 = enough to show interest,
-    not enough to be desperate.
+    4 din baad reply nahi aaya → follow up bhejo.
+    Max 2 follow ups per email.
+    Sheets mein log karo.
     """
-    profile = db.query(UserProfile).filter(
-        UserProfile.user_id == user_id
-    ).first()
+    from backend.agents.email_sender    import send_email
+    from backend.agents.email_generator import generate_followup_email
 
-    followup_days = profile.followup_after_days \
-                   if profile else 4
-    max_followups = profile.max_followups \
-                   if profile else MAX_FOLLOWUPS
+    sent_log = get_sent_log(user_id)
+    if not sent_log:
+        return {"followups_sent": 0, "emails": []}
 
-    # Cutoff date calculate karo
-    cutoff = datetime.utcnow() - timedelta(days=followup_days)
+    now            = datetime.utcnow()
+    followups_sent = 0
+    sent_emails    = []
 
-    # Eligible applications
-    applications = db.query(Application).filter(
-        Application.user_id == user_id,
-        Application.status.in_([
-            "email_sent",
-            "follow_up_1_sent"
-        ]),
-        Application.follow_up_count < max_followups,
-        Application.sent_date <= cutoff
-    ).all()
-
-    if not applications:
-        logger.info("No applications need follow-up")
-        return {"sent": 0}
-
-    gmail, password = get_gmail_credentials(db, user_id)
-    if not gmail or not password:
-        return {"error": "Gmail credentials missing"}
-
-    sent_count = 0
-
-    for app in applications:
-        try:
-            # Follow-up email generate karo
-            followup = generate_followup_email(
-                db             = db,
-                application_id = app.id
-            )
-
-            if followup.get("error"):
-                logger.warning(
-                    f"  ⚠️ Followup gen failed "
-                    f"app {app.id}: {followup['error']}"
-                )
-                continue
-
-            to_email = followup.get("contact_email")
-            if not to_email:
-                logger.warning(
-                    f"  ⚠️ No email for app {app.id}"
-                )
-                continue
-
-            # Send karo
-            sent = send_email(
-                gmail_address = gmail,
-                app_password  = password,
-                to_email      = to_email,
-                subject       = followup["subject"],
-                body          = followup["body"],
-                resume_path   = app.resume_version
-            )
-
-            if sent:
-                # Status update karo
-                app.follow_up_count   += 1
-                app.last_followup_date = datetime.utcnow()
-
-                if app.follow_up_count == 1:
-                    app.status = "follow_up_1_sent"
-                elif app.follow_up_count >= 2:
-                    app.status = "follow_up_2_sent"
-
-                db.commit()
-                sent_count += 1
-
-                logger.info(
-                    f"  ✅ Follow-up {app.follow_up_count} "
-                    f"sent for app {app.id}"
-                )
-
-        except Exception as e:
-            logger.error(
-                f"  ❌ Followup failed app {app.id}: {e}"
-            )
+    for entry in sent_log:
+        # Skip agar reply aa gaya
+        if entry.get("replied"):
             continue
 
-    # Max followups ke baad ghosted mark karo
-    ghosted = db.query(Application).filter(
-        Application.user_id == user_id,
-        Application.status  == "follow_up_2_sent",
-        Application.follow_up_count >= max_followups,
-        Application.last_followup_date <= cutoff
-    ).all()
+        # Skip agar max followups ho gaye
+        followup_count = entry.get("followup_count", 0)
+        if followup_count >= MAX_FOLLOWUPS:
+            continue
 
-    for app in ghosted:
-        app.status = "ghosted"
+        # Kitne din ho gaye
+        try:
+            sent_at  = datetime.fromisoformat(entry["sent_at"])
+            days_ago = (now - sent_at).days
+        except:
+            continue
 
-    if ghosted:
-        db.commit()
-        logger.info(f"  👻 {len(ghosted)} applications marked ghosted")
+        # Last followup ke baad kitne din
+        last_followup = entry.get("followup_at")
+        if last_followup:
+            try:
+                last_dt         = datetime.fromisoformat(last_followup)
+                days_since_last = (now - last_dt).days
+                if days_since_last < FOLLOWUP_AFTER_DAYS:
+                    continue
+            except:
+                pass
+        else:
+            if days_ago < FOLLOWUP_AFTER_DAYS:
+                continue
+
+        logger.info(
+            f"  🔄 Follow up for {entry['to']} "
+            f"({days_ago} days ago)"
+        )
+
+        contact = {
+            "name" : entry.get("contact", "Founder"),
+            "role" : "",
+            "email": entry["to"]
+        }
+
+        # Follow up email generate karo
+        followup = generate_followup_email(
+            user_id         = user_id,
+            company         = entry.get("company", ""),
+            contact         = contact,
+            original_subject= entry.get("subject", ""),
+            original_body   = entry.get("body",    ""),
+            days_ago        = days_ago
+        )
+
+        if followup.get("error"):
+            logger.error(f"Generate error: {followup['error']}")
+            continue
+
+        # Send karo
+        result = send_email(
+            user_id = user_id,
+            to_email= entry["to"],
+            subject = followup["subject"],
+            body    = followup["body"],
+            company = entry.get("company", ""),
+            contact = entry.get("contact", "")
+        )
+
+        if result.get("success"):
+            entry["followup_sent"]   = True
+            entry["followup_at"]     = datetime.utcnow().isoformat()
+            entry["followup_count"]  = followup_count + 1
+            entry["status"]          = "followup_sent"
+
+            followups_sent += 1
+            sent_emails.append({
+                "to"     : entry["to"],
+                "company": entry.get("company", ""),
+                "subject": followup["subject"]
+            })
+
+            logger.info(f"  ✅ Follow up sent to {entry['to']}")
+
+            # ── Google Sheets update ──────────────
+            try:
+                from backend.utils.sheets_tracker import log_followup
+                log_followup(
+                    user_id         = user_id,
+                    company         = entry.get("company", ""),
+                    contact_email   = entry["to"],
+                    original_subject= entry.get("subject", ""),
+                    followup_subject= followup["subject"],
+                    new_value       = followup.get("new_value_added", "")
+                )
+            except Exception as e:
+                logger.warning(f"Sheets followup log error: {e}")
+
+        else:
+            logger.error(f"  ❌ Failed: {result.get('error')}")
+
+    if followups_sent > 0:
+        save_sent_log(user_id, sent_log)
+
+    logger.info(f"[Followup] {followups_sent} sent")
 
     return {
-        "followups_sent": sent_count,
-        "ghosted"       : len(ghosted)
+        "followups_sent": followups_sent,
+        "emails"        : sent_emails
     }
+
+
+def run_for_all_users() -> dict:
+    """Sab users ke liye — scheduler se call hota hai."""
+    from backend.agents.reply_detector import get_all_users_with_sent_emails
+
+    users   = get_all_users_with_sent_emails()
+    total   = 0
+    results = {}
+
+    for user_id in users:
+        try:
+            result           = check_and_send_followups(user_id)
+            results[user_id] = result
+            total           += result.get("followups_sent", 0)
+        except Exception as e:
+            logger.error(f"User {user_id} error: {e}")
+            results[user_id] = {"error": str(e)}
+
+    logger.info(f"[Followup] Total: {total}")
+    return {"total_followups": total, "by_user": results}

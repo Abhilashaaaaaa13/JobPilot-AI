@@ -1,228 +1,210 @@
 # backend/agents/email_sender.py
-# Gmail SMTP se email bhejo
-# Resume attach karo
-# DB mein log karo
 
-import smtplib
 import os
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
-from datetime import datetime
-from sqlalchemy.orm import Session
-from backend.models.application import Application
-from backend.models.contact import Contact
-from backend.models.user import UserProfile
-from backend.config import FOLLOWUP_AFTER_DAYS
-from loguru import logger
+import json
+import smtplib
+from email.mime.text        import MIMEText
+from email.mime.multipart   import MIMEMultipart
+from email.mime.application import MIMEApplication
+from datetime               import datetime
+from loguru                 import logger
+from dotenv                 import load_dotenv
+load_dotenv()
 
 
-def get_gmail_credentials(
-    db      : Session,
-    user_id : int
-) -> tuple:
-    """
-    User ka Gmail credentials lo DB se.
+def get_gmail_creds(user_id: int) -> dict:
+    try:
+        from backend.database    import SessionLocal
+        from backend.models.user import UserProfile
 
-    Why per-user credentials?
-    Har user apne Gmail se email bhejega.
-    System ka ek shared Gmail nahi hai.
-    Zyada authentic lagta hai — better delivery.
-    """
-    profile = db.query(UserProfile).filter(
-        UserProfile.user_id == user_id
-    ).first()
+        db      = SessionLocal()
+        profile = db.query(UserProfile).filter(
+            UserProfile.user_id == user_id
+        ).first()
+        db.close()
 
-    if not profile:
-        return None, None
+        if not profile:
+            return {"error": "Profile nahi mila"}
+        if not profile.gmail_address or not profile.gmail_app_password:
+            return {"error": "Gmail credentials nahi hain — onboarding complete karo"}
 
-    return profile.gmail_address, profile.gmail_app_password
+        return {
+            "email"   : profile.gmail_address,
+            "password": profile.gmail_app_password
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def get_sent_log(user_id: int) -> list:
+    log_file = f"uploads/{user_id}/sent_emails/log.json"
+    if not os.path.exists(log_file):
+        return []
+    try:
+        with open(log_file, "r") as f:
+            return json.load(f)
+    except:
+        return []
+
+
+def save_sent_log(user_id: int, log: list):
+    log_dir  = f"uploads/{user_id}/sent_emails"
+    log_file = f"{log_dir}/log.json"
+    os.makedirs(log_dir, exist_ok=True)
+    with open(log_file, "w") as f:
+        json.dump(log, f, indent=2)
 
 
 def send_email(
-    gmail_address  : str,
-    app_password   : str,
-    to_email       : str,
-    subject        : str,
-    body           : str,
-    resume_path    : str = None
-) -> bool:
+    user_id    : int,
+    to_email   : str,
+    subject    : str,
+    body       : str,
+    resume_path: str = None,
+    cc         : str = None,
+    company    : str = "",
+    contact    : str = ""
+) -> dict:
     """
     Gmail SMTP se email bhejo.
-
-    Why App Password?
-    Google 2FA ke baad main password se
-    third party apps kaam nahi karte.
-    App Password = specific 16-char password
-    sirf ek app ke liye.
-
-    Why TLS port 587?
-    Port 465 = SSL (older)
-    Port 587 = TLS (modern, recommended)
-    Gmail dono support karta hai but
-    587 more reliable hai.
     """
+    creds = get_gmail_creds(user_id)
+    if "error" in creds:
+        return {"success": False, "error": creds["error"]}
+
+    gmail_address  = creds["email"]
+    gmail_password = creds["password"]
+
     try:
-        # Email object banao
-        msg = MIMEMultipart()
+        msg            = MIMEMultipart()
         msg["From"]    = gmail_address
         msg["To"]      = to_email
         msg["Subject"] = subject
+        if cc:
+            msg["Cc"] = cc
 
-        # Body attach karo
         msg.attach(MIMEText(body, "plain"))
 
-        # Resume attach karo agar hai
+        # Resume attach
         if resume_path and os.path.exists(resume_path):
             with open(resume_path, "rb") as f:
-                part = MIMEBase("application", "octet-stream")
-                part.set_payload(f.read())
-                encoders.encode_base64(part)
-
-                filename = os.path.basename(resume_path)
-                part.add_header(
-                    "Content-Disposition",
-                    f"attachment; filename={filename}"
+                part = MIMEApplication(
+                    f.read(),
+                    Name=os.path.basename(resume_path)
                 )
-                msg.attach(part)
-            logger.info(f"  📎 Resume attached: {filename}")
+            part["Content-Disposition"] = (
+                f'attachment; filename="{os.path.basename(resume_path)}"'
+            )
+            msg.attach(part)
+            logger.info(f"  📎 Resume attached")
 
-        # Gmail SMTP se bhejo
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
-            server.login(gmail_address, app_password)
-            server.send_message(msg)
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(gmail_address, gmail_password)
+            recipients = [to_email]
+            if cc:
+                recipients.append(cc)
+            server.sendmail(gmail_address, recipients, msg.as_string())
 
-        logger.info(f"  ✅ Email sent to {to_email}")
-        return True
+        sent_at = datetime.utcnow().isoformat()
+        logger.info(f"  ✅ Sent to {to_email}")
+
+        _log_sent(
+            user_id = user_id,
+            to      = to_email,
+            subject = subject,
+            body    = body,
+            sent_at = sent_at,
+            company = company,
+            contact = contact
+        )
+
+        return {
+            "success": True,
+            "sent_at": sent_at,
+            "from"   : gmail_address,
+            "to"     : to_email
+        }
 
     except smtplib.SMTPAuthenticationError:
-        logger.error(
-            "❌ Gmail auth failed — "
-            "App Password check karo"
-        )
-        return False
-    except smtplib.SMTPException as e:
-        logger.error(f"❌ SMTP error: {e}")
-        return False
+        error = "Gmail auth failed — App Password check karo"
+        logger.error(error)
+        return {"success": False, "error": error}
+
+    except smtplib.SMTPRecipientsRefused:
+        error = f"Invalid email: {to_email}"
+        logger.error(error)
+        return {"success": False, "error": error}
+
     except Exception as e:
-        logger.error(f"❌ Send error: {e}")
-        return False
+        logger.error(f"Send error: {e}")
+        return {"success": False, "error": str(e)}
 
 
-def log_application(
-    db          : Session,
-    user_id     : int,
-    job_id      : int  = None,
-    company_id  : int  = None,
-    contact_id  : int  = None,
-    subject     : str  = "",
-    body        : str  = "",
-    resume_path : str  = None,
-    ats_before  : float = None,
-    ats_after   : float = None
-) -> Application:
-    """
-    Email bhejne ke baad application DB mein log karo.
+def _log_sent(
+    user_id: int,
+    to     : str,
+    subject: str,
+    body   : str,
+    sent_at: str,
+    company: str = "",
+    contact: str = ""
+):
+    """JSON log + Google Sheets sync."""
+    log = get_sent_log(user_id)
 
-    Why log karna zaroori hai?
-    → Follow-up ke liye track karna hai
-    → Reply detect karne ke liye reference chahiye
-    → User ko dashboard pe dikhana hai
-    → Google Sheets sync ke liye
-    """
-    from datetime import datetime, timedelta
+    log.append({
+        "to"            : to,
+        "subject"       : subject,
+        "body"          : body[:500],
+        "sent_at"       : sent_at,
+        "company"       : company,
+        "contact"       : contact,
+        "replied"       : False,
+        "reply_at"      : None,
+        "reply_body"    : None,
+        "followup_sent" : False,
+        "followup_at"   : None,
+        "followup_count": 0,
+        "status"        : "awaiting"
+    })
 
-    app = Application(
-        user_id           = user_id,
-        job_id            = job_id,
-        company_id        = company_id,
-        contact_id        = contact_id,
-        email_subject     = subject,
-        email_body        = body,
-        resume_version    = resume_path,
-        sent_date         = datetime.utcnow(),
-        status            = "email_sent",
-        follow_up_count   = 0,
-        ats_score_before  = ats_before,
-        ats_score_after   = ats_after,
-    )
+    save_sent_log(user_id, log)
+    logger.info(f"  📝 Logged: {to}")
 
-    db.add(app)
-    db.commit()
-    db.refresh(app)
-
-    logger.info(f"  📝 Application logged — ID: {app.id}")
-    return app
+    # ── Google Sheets sync ────────────────────
+    try:
+        from backend.utils.sheets_tracker import log_cold_email
+        log_cold_email(
+            user_id       = user_id,
+            company       = company,
+            website       = "",
+            contact_name  = contact,
+            contact_role  = "",
+            contact_email = to,
+            subject       = subject,
+            gap           = "",
+            proposal      = ""
+        )
+    except Exception as e:
+        logger.warning(f"Sheets sync error: {e}")
 
 
 def send_and_log(
-    db          : Session,
-    user_id     : int,
-    to_email    : str,
-    subject     : str,
-    body        : str,
-    resume_path : str  = None,
-    job_id      : int  = None,
-    company_id  : int  = None,
-    contact_id  : int  = None,
-    ats_before  : float = None,
-    ats_after   : float = None
+    user_id    : int,
+    to_email   : str,
+    subject    : str,
+    body       : str,
+    resume_path: str = None,
+    company    : str = "",
+    contact    : str = ""
 ) -> dict:
-    """
-    Main function:
-    1. Gmail credentials lo
-    2. Email bhejo
-    3. Application log karo
-    4. Result return karo
-    """
-    gmail, password = get_gmail_credentials(db, user_id)
-
-    if not gmail or not password:
-        return {
-            "success": False,
-            "error"  : "Gmail credentials nahi hain — profile mein daalo"
-        }
-
-    if not to_email:
-        return {
-            "success": False,
-            "error"  : "Recipient email missing"
-        }
-
-    # Email bhejo
-    sent = send_email(
-        gmail_address = gmail,
-        app_password  = password,
-        to_email      = to_email,
-        subject       = subject,
-        body          = body,
-        resume_path   = resume_path
-    )
-
-    if not sent:
-        return {
-            "success": False,
-            "error"  : "Email send nahi hua — Gmail settings check karo"
-        }
-
-    # Log karo
-    app = log_application(
-        db          = db,
+    """Pipeline nodes se call hota hai."""
+    return send_email(
         user_id     = user_id,
-        job_id      = job_id,
-        company_id  = company_id,
-        contact_id  = contact_id,
+        to_email    = to_email,
         subject     = subject,
         body        = body,
         resume_path = resume_path,
-        ats_before  = ats_before,
-        ats_after   = ats_after
+        company     = company,
+        contact     = contact
     )
-
-    return {
-        "success"       : True,
-        "application_id": app.id,
-        "message"       : f"Email sent to {to_email}"
-    }
