@@ -9,7 +9,7 @@ from backend.database import Base
 class Reply(Base):
     __tablename__ = "replies"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    application_id = Column(Integer, default=datetime.utcnow)
+    application_id = Column(Integer, ForeignKey("applications.id"))
 
     received_date = Column(DateTime, default=datetime.utcnow)
     reply_body = Column(Text)
