@@ -1,96 +1,123 @@
-from typing import TypedDict, Annotated
+# backend/pipeline/state.py
+
+from typing import TypedDict, Annotated, Optional
 import operator
 
-class ResumeReview(TypedDict):
-    """One resume review item.
-    created by resume node.
-    consumed by INTERRUPT 1."""
 
-    id                  : str       # unique id — job_id or company_id
-    type                : str       # "job" or "company"
-    job_id              : int | None
-    company_id          : int | None
-    company_name        : str
-    role                : str
-    original_resume_path: str
-    rewritten_resume_path: str
-    ats_before          : float
-    ats_after           : float
-    improvement         : float
-    changes_summary     : list[str]  # what changed
-    decision            : str | None # "accept" / "reject" / None
+class ContactInfo(TypedDict):
+    name    : str
+    role    : str
+    email   : Optional[str]
+    verified: bool
+
+
+class JobResult(TypedDict):
+    title      : str
+    company    : str
+    location   : str
+    stipend    : str
+    description: str
+    url        : str
+    type       : str   # internship / job
+    source     : str
+
+
+class CompanyResult(TypedDict):
+    name       : str
+    website    : str
+    one_liner  : str
+    description: str
+    funding    : str
+    team_size  : str
+    location   : str
+    source     : str
+    contacts   : list[ContactInfo]
+
+
+class ResumeReview(TypedDict):
+    id                   : str
+    job_title            : str
+    company              : str
+    original_path        : str
+    optimized_path       : str
+    ats_before           : float
+    ats_after            : float
+    changes              : list[str]
+    decision             : Optional[str]  # accept / reject
+
 
 class EmailReview(TypedDict):
-    """One email review item.
-    Created by email generator mode.
-    consumed by INTERRUPT 2"""
-    id              : str
-    type            : str       # "job_email" or "cold_email"
-    job_id          : int | None
-    company_id      : int | None
-    company_name    : str
-    contact_name    : str
-    contact_role    : str
-    contact_email   : str | None
-    subject         : str
-    body            : str
-    gap_identified  : str
-    proposal        : str
-    why_user_fits   : str
-    resume_path     : str | None
-    decision        : str | None  # "approve" / "edit" / "reject"
-    edited_subject  : str | None  # if user edited
-    edited_body     : str | None  # if user edited
+    id             : str
+    company        : str
+    contact_name   : str
+    contact_role   : str
+    contact_email  : Optional[str]
+    subject        : str
+    body           : str
+    gap_identified : str
+    proposal       : str
+    why_user_fits  : str
+    resume_path    : Optional[str]
+    decision       : Optional[str]   # approve / edit / reject
+    edited_subject : Optional[str]
+    edited_body    : Optional[str]
 
-class PipelineState(TypedDict):
-    """Master state for the entire pipeline.
-    
-    Concept: Single Source of Truth
-    Every node reads from here, writes to here.
-    No node has its own hidden state.
-    
-    Annotated[list, operator.add] means:
-    When multiple nodes write to same list,
-    LangGraph merges them (add) instead of
-    replacing. This enables parallel nodes
-    to both write results without conflict."""
 
-    #identity
-    user_id     : int
-    thread_id   : str
+# ─────────────────────────────────────────────
+# TRACK A — Job Applications
+# ─────────────────────────────────────────────
 
-    #step tracking
+class TrackAState(TypedDict):
+    user_id  : int
+    thread_id: str
+    prefs    : dict
+
+    # Step 1 — Scraping
+    current_step  : str
+    errors        : Annotated[list, operator.add]
+
+    # Step 2 — Scraped results
+    scraped_jobs  : list[JobResult]
+
+    # Step 3 — User selects
+    selected_jobs : list[JobResult]
+
+    # Step 4 — Resume optimization
+    resume_reviews        : list[ResumeReview]
+    approved_resume_ids   : list[str]
+    rejected_resume_ids   : list[str]
+
+    # Step 5 — Applications sent
+    applications_sent: Annotated[list, operator.add]
+
+
+# ─────────────────────────────────────────────
+# TRACK B — Cold Outreach
+# ─────────────────────────────────────────────
+
+class TrackBState(TypedDict):
+    user_id  : int
+    thread_id: str
+    prefs    : dict
+
     current_step: str
-    # values: "scraping", "scoring", "researching",
-    #         "finding_contacts", "optimizing_resumes",
-    #         "generating_emails", "awaiting_resume_review",
-    #         "awaiting_email_review", "sending", "done"
-    errors : Annotated[list,operator.add]
+    errors      : Annotated[list, operator.add]
 
-    #scraping results
-    jobs_scraped :Annotated[list,operator.add]
-    companies_scraped :Annotated[list,operator.add]
+    # Step 1 — Scraped companies
+    scraped_companies : list[CompanyResult]
 
-    #after scroinf
-    relevant_jobs : Annotated[list,operator.add]
+    # Step 2 — User selects
+    selected_companies: list[CompanyResult]
 
-    #after research+contacts
-    researched_companies : Annotated[list, operator.add]
-    contacts_found : Annotated[list,operator.add]
-
-    #interrupt 1-resume review
-    pending_resume_reviews : list[ResumeReview]
+    # Step 3 — Resume optimization
+    resume_reviews      : list[ResumeReview]
     approved_resume_ids : list[str]
-    rejected_resume_ids :list[str]
-    #rejected = original resume use hoga
+    rejected_resume_ids : list[str]
 
-    #interrupt 2-email review
-    pending_email_reviews  : list[EmailReview]
-    approved_email_ids     : list[str]
-    rejected_email_ids     : list[str]
+    # Step 4 — Email generation
+    email_reviews      : list[EmailReview]
+    approved_email_ids : list[str]
+    rejected_email_ids : list[str]
 
-    #final result
-    emails_sent : Annotated[list, operator.add]
-
-    
-
+    # Step 5 — Emails sent
+    emails_sent: Annotated[list, operator.add]

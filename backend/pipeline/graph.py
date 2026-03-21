@@ -1,142 +1,219 @@
-from functools import partial
-from langgraph.graph import StateGraph,END
+# backend/pipeline/graph.py
+
+from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
-from sqlalchemy.orm import Session
-from backend.pipeline.state import PipelineState
+from backend.pipeline.state import TrackAState, TrackBState
 from backend.pipeline.nodes import (
-    scraper_node,
-    scorer_node,
-    research_node,
-    contact_finder_node,
-    resume_optimizer_node,
-    email_generator_node,
-    email_sender_node,
+    scrape_jobs_node,
+    optimize_resumes_a_node,
+    apply_node,
+    scrape_companies_node,
+    optimize_resumes_b_node,
+    generate_emails_node,
+    send_emails_node,
 )
+from loguru import logger
 
-def should_continue_after_scraping(state:PipelineState)->str:
-    """Conditional edge after scraping.
-    
-    Concept: Routing function
-    Returns the name of next node to go to.
-    If nothing was scraped — end early.
-    No point running scorer on empty data."""
 
-    jobs      = state.get("jobs_scraped", [])
-    companies = state.get("companies_scraped", [])
+# ─────────────────────────────────────────────
+# CONDITIONAL EDGES
+# ─────────────────────────────────────────────
 
-    if not jobs and not companies:
+def track_a_after_scrape(state: TrackAState) -> str:
+    jobs = state.get("scraped_jobs", [])
+    if not jobs:
+        logger.warning("No jobs found — ending Track A")
         return "end"
-    return "score_and_research"
+    return "continue"
 
-def should_continue_after_scoring(state:PipelineState)->str:
-    """Conditional edge after scoring.
-    If no relevant jobs found and no companies
-    to research — end early."""
-    relevant  = state.get("relevant_jobs", [])
-    companies = state.get("companies_scraped", [])
 
-    if not relevant and not companies:
+def track_b_after_scrape(state: TrackBState) -> str:
+    companies = state.get("scraped_companies", [])
+    if not companies:
+        logger.warning("No companies found — ending Track B")
         return "end"
-    return "optimize_resumes"
+    return "continue"
 
-def build_graph(db:Session):
-    """Builds and compiles the pipeline graph.
-    
-    Concept: Graph compilation
-    compile() validates the graph structure,
-    sets up checkpointing, and prepares
-    interrupt points.
-    
-    Why pass db to nodes via partial()?
-    LangGraph node functions only receive state.
-    We need db session too.
-    partial() pre-fills the db argument so
-    LangGraph can call node(state) cleanly.
-    
-    Why SqliteSaver?
-    Persists state across app restarts.
-    User can close browser, come back tomorrow,
-    and still resume their pipeline.
-    Free, no extra infrastructure needed."""
 
-    # Wrap nodes with db session
-    # partial() = pre-fill db argument
-    scraper_with_db          = partial(scraper_node,          db=db)
-    scorer_with_db           = partial(scorer_node,           db=db)
-    research_with_db         = partial(research_node,         db=db)
-    contact_finder_with_db   = partial(contact_finder_node,   db=db)
-    resume_optimizer_with_db = partial(resume_optimizer_node, db=db)
-    email_generator_with_db  = partial(email_generator_node,  db=db)
-    email_sender_with_db     = partial(email_sender_node,     db=db)
+# ─────────────────────────────────────────────
+# TRACK A GRAPH
+# ─────────────────────────────────────────────
 
-    # Build graph
-    graph = StateGraph(PipelineState)
+def build_track_a_graph():
+    """
+    Flow:
+    scrape_jobs
+        ↓ no jobs → END
+        ↓ jobs found → continue
+    [INTERRUPT — user selects jobs]
+    optimize_resumes
+        ↓
+    [INTERRUPT — resume review]
+    apply
+        ↓
+    END
+    """
+    graph = StateGraph(TrackAState)
 
-    # Add all nodes
-    graph.add_node("scraper",          scraper_with_db)
-    graph.add_node("scorer",           scorer_with_db)
-    graph.add_node("researcher",       research_with_db)
-    graph.add_node("contact_finder",   contact_finder_with_db)
-    graph.add_node("resume_optimizer", resume_optimizer_with_db)
-    graph.add_node("email_generator",  email_generator_with_db)
-    graph.add_node("email_sender",     email_sender_with_db)
+    graph.add_node("scrape_jobs",       scrape_jobs_node)
+    graph.add_node("optimize_resumes",  optimize_resumes_a_node)
+    graph.add_node("apply",             apply_node)
 
-    # Entry point
-    graph.set_entry_point("scraper")
+    graph.set_entry_point("scrape_jobs")
 
-    # Conditional edge after scraping
     graph.add_conditional_edges(
-        "scraper",
-        should_continue_after_scraping,
+        "scrape_jobs",
+        track_a_after_scrape,
         {
-            "end"               : END,
-            "score_and_research": "scorer"
+            "end"     : END,
+            "continue": "optimize_resumes"
         }
     )
 
-    # Scorer and researcher run after scraper
-    # Scorer → resume_optimizer (after scoring)
-    graph.add_conditional_edges(
-        "scorer",
-        should_continue_after_scoring,
-        {
-            "end"             : END,
-            "optimize_resumes": "resume_optimizer"
-        }
-    )
+    graph.add_edge("optimize_resumes", "apply")
+    graph.add_edge("apply",            END)
 
-    # Researcher → contact_finder → resume_optimizer
-    # Note: researcher runs parallel with scorer
-    # Both feed into resume_optimizer
-    graph.add_edge("scraper",          "researcher")
-    graph.add_edge("researcher",       "contact_finder")
-    graph.add_edge("contact_finder",   "resume_optimizer")
-
-    # After both scorer and contact_finder
-    # feed into resume_optimizer
-    # resume_optimizer → INTERRUPT 1 → email_generator
-    graph.add_edge("resume_optimizer", "email_generator")
-
-    # email_generator → INTERRUPT 2 → email_sender
-    graph.add_edge("email_generator",  "email_sender")
-
-    # email_sender → END
-    graph.add_edge("email_sender", END)
-
-    # Checkpointer — saves state to SQLite
     checkpointer = SqliteSaver.from_conn_string(
-        "data/pipeline_state.db"
+        "data/track_a_state.db"
     )
 
-    # Compile with interrupt points
-    # interrupt_before = pause BEFORE entering these nodes
-    # State is saved, user can review, then resume
     compiled = graph.compile(
         checkpointer     = checkpointer,
         interrupt_before = [
-            "email_generator",  # INTERRUPT 1 — resume review
-            "email_sender",     # INTERRUPT 2 — email review
+            "optimize_resumes",  # INTERRUPT 1 — job selection
+            "apply",             # INTERRUPT 2 — resume review
         ]
     )
 
     return compiled
+
+
+# ─────────────────────────────────────────────
+# TRACK B GRAPH
+# ─────────────────────────────────────────────
+
+def build_track_b_graph():
+    """
+    Flow:
+    scrape_companies
+        ↓ no companies → END
+        ↓ found → continue
+    [INTERRUPT — user selects companies]
+    optimize_resumes
+        ↓
+    [INTERRUPT — resume review]
+    generate_emails
+        ↓
+    [INTERRUPT — email review]
+    send_emails
+        ↓
+    END
+    """
+    graph = StateGraph(TrackBState)
+
+    graph.add_node("scrape_companies",  scrape_companies_node)
+    graph.add_node("optimize_resumes",  optimize_resumes_b_node)
+    graph.add_node("generate_emails",   generate_emails_node)
+    graph.add_node("send_emails",       send_emails_node)
+
+    graph.set_entry_point("scrape_companies")
+
+    graph.add_conditional_edges(
+        "scrape_companies",
+        track_b_after_scrape,
+        {
+            "end"     : END,
+            "continue": "optimize_resumes"
+        }
+    )
+
+    graph.add_edge("optimize_resumes", "generate_emails")
+    graph.add_edge("generate_emails",  "send_emails")
+    graph.add_edge("send_emails",      END)
+
+    checkpointer = SqliteSaver.from_conn_string(
+        "data/track_b_state.db"
+    )
+
+    compiled = graph.compile(
+        checkpointer     = checkpointer,
+        interrupt_before = [
+            "optimize_resumes",  # INTERRUPT 1 — company selection
+            "generate_emails",   # INTERRUPT 2 — resume review
+            "send_emails",       # INTERRUPT 3 — email review
+        ]
+    )
+
+    return compiled
+
+
+# ─────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────
+
+def get_track_a_state(thread_id: str) -> dict:
+    try:
+        graph  = build_track_a_graph()
+        config = {"configurable": {"thread_id": thread_id}}
+        state  = graph.get_state(config)
+        return state.values if state else {}
+    except Exception as e:
+        logger.error(f"Get Track A state error: {e}")
+        return {}
+
+
+def get_track_b_state(thread_id: str) -> dict:
+    try:
+        graph  = build_track_b_graph()
+        config = {"configurable": {"thread_id": thread_id}}
+        state  = graph.get_state(config)
+        return state.values if state else {}
+    except Exception as e:
+        logger.error(f"Get Track B state error: {e}")
+        return {}
+
+
+def update_track_a_state(thread_id: str, updates: dict) -> bool:
+    try:
+        graph  = build_track_a_graph()
+        config = {"configurable": {"thread_id": thread_id}}
+        graph.update_state(config, updates)
+        return True
+    except Exception as e:
+        logger.error(f"Update Track A state error: {e}")
+        return False
+
+
+def update_track_b_state(thread_id: str, updates: dict) -> bool:
+    try:
+        graph  = build_track_b_graph()
+        config = {"configurable": {"thread_id": thread_id}}
+        graph.update_state(config, updates)
+        return True
+    except Exception as e:
+        logger.error(f"Update Track B state error: {e}")
+        return False
+
+
+def resume_track_a(thread_id: str) -> None:
+    import threading
+    def _run():
+        try:
+            graph  = build_track_a_graph()
+            config = {"configurable": {"thread_id": thread_id}}
+            graph.invoke(None, config=config)
+        except Exception as e:
+            logger.error(f"Track A resume error: {e}")
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def resume_track_b(thread_id: str) -> None:
+    import threading
+    def _run():
+        try:
+            graph  = build_track_b_graph()
+            config = {"configurable": {"thread_id": thread_id}}
+            graph.invoke(None, config=config)
+        except Exception as e:
+            logger.error(f"Track B resume error: {e}")
+    threading.Thread(target=_run, daemon=True).start()
