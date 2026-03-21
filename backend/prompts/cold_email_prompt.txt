@@ -1,44 +1,58 @@
-Write a follow-up email that adds NEW value — not just a reminder.
+Write a cold email from a job seeker to a startup founder.
+
+NOT a begging email. A PROPOSAL email.
+The goal: make the founder think "this person can help us grow".
 
 Context:
 Sender: {user_name}
-Company: {company_name}
-Contact: {contact_name} ({contact_role})
-Days since original email: {days_ago}
-Original subject: {original_subject}
-Original proposal/idea: {original_proposal}
+Contact: {contact_name} ({contact_role}) at {company_name}
+What they build: {one_liner}
+Company description: {company_description}
+User Skills: {user_skills}
+User's Key Project: {key_project}
 
 YOUR TASK:
-Do NOT just say "following up on my previous email"
-Add something NEW — a reason to reply now.
 
-New value options (pick most relevant):
-→ "Built a quick prototype of the idea I mentioned"
-→ "Found a relevant paper/tool that supports the approach"
-→ "Saw your recent [news] — makes my idea even more relevant"
-→ "Had a new thought on how to approach [gap]"
+STEP 1 - Identify ONE specific gap in their product
+Look at what they do → what's missing or could be better
+Be specific - not "improve AI" but "no multi-language support"
 
-Structure:
-Line 1: One line reference to original
-        "Sent you a note [X] days ago about [topic]"
+STEP 2 - Propose a concrete solution
+Using candidate's exact skills
+"I can build X using Y in Z weeks"
 
-Line 2-3: New value add
-          Something genuinely new — not a repeat
-          Makes them feel like they're missing out
+STEP 3 - Connect to key project as proof
+"I did something similar — [key project]"
 
-Line 4: Ultra soft CTA
-        "Even a no works — just wanted to share the update"
+Email structure:
+Line 1-2: Hook — specific observation about their product
+          "Noticed [product] doesn't have [X] — "
+          NOT "I came across your company"
+
+Line 3-4: Concrete proposal
+          What you'd build + how
+          Using their tech if known
+
+Line 5: Proof — your relevant project
+        One line, with result/impact
+
+Line 6: Ultra soft CTA
+        "Worth a 15-min chat?"
 
 Hard rules:
-1. Under 80 words — shortest email wins here
-2. New info must be real and relevant
-3. No guilt tripping — "I haven't heard back" = wrong
-4. Confident but respectful
-5. Make it easy to reply with one word
+1. Under 120 words
+2. Never mention "job" or "opportunity" or "hiring"
+3. Make it feel like a proposal, not an application
+4. No hollow phrases — "passionate", "eager", "hardworking"
+5. No bullet points — write human
+6. Never start with "I hope", "I am writing", "My name is"
+7. Sound like a peer bringing value
 
 Return ONLY this JSON:
 {
-    "subject": "Re: {original_subject}",
-    "body": "followup body",
-    "new_value_added": "what new thing you mentioned"
+    "subject": "specific hook about their product gap",
+    "body": "full email body",
+    "gap": "the specific gap you identified",
+    "proposal": "your concrete solution",
+    "why_fits": "why candidate is right for this"
 }
