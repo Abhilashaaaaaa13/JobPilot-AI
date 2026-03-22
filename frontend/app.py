@@ -91,26 +91,19 @@ if "user_id" not in st.session_state:
     st.stop()
 
 # ── Logged In ─────────────────────────────────
+# Sidebar mein page links update karo:
 with st.sidebar:
     st.title("🤖 Job Hunter")
     st.caption(f"👤 {st.session_state.get('email', '')}")
     st.divider()
 
-    st.page_link("pages/5_dashboard.py", label="📊 Dashboard")
-    st.page_link("pages/3_jobs.py",      label="🔍 Jobs & Startups")
-    st.page_link("pages/4_review.py",    label="✅ Review")
-    st.page_link("pages/2_onboarding.py",label="👤 Profile")
-
-    # Active pipeline indicator
-    if st.session_state.get("track_a_thread"):
-        st.info("⚡ Track A active")
-    if st.session_state.get("track_b_thread"):
-        st.info("⚡ Track B active")
+    st.page_link("pages/2_onboarding.py", label="👤 Profile Setup")
+    st.page_link("pages/3_apply.py",      label="💼 Direct Apply")
+    st.page_link("pages/4_outreach.py",   label="🚀 Cold Outreach")
+    st.page_link("pages/5_tracker.py",    label="📊 Tracker")
 
     st.divider()
     if st.button("🚪 Logout"):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
-
-st.switch_page("pages/5_dashboard.py")

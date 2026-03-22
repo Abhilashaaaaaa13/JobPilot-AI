@@ -1,12 +1,20 @@
+# frontend/pages/2_onboarding.py
+
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-import streamlit as st
 import json
+import streamlit as st
+import pdfplumber
+from groq import Groq
+from dotenv import load_dotenv
+load_dotenv()
+
 from backend.database import SessionLocal
 from backend.models.user import UserProfile
-from backend.utils.pdf_parser import parse_resume
+
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 if "user_id" not in st.session_state:
     st.warning("Pehle login karo")
@@ -14,127 +22,311 @@ if "user_id" not in st.session_state:
 
 user_id = st.session_state["user_id"]
 
-st.title("👤 Setup Your Profile")
+st.title("👤 Profile Setup")
+st.caption("Apna resume upload karo aur preferences set karo")
 
-# ── Step 1 — Resume Upload ─────────────────────
-st.subheader("Step 1 — Resume Upload karo")
+# ─────────────────────────────────────────────
+# RESUME UPLOAD + SKILL EXTRACTION
+# ─────────────────────────────────────────────
 
-uploaded = st.file_uploader("Resume PDF", type=["pdf"])
+st.subheader("📄 Resume Upload")
+
+uploaded = st.file_uploader(
+    "Resume upload karo (PDF)",
+    type=["pdf"]
+)
+
+extracted_skills = []
+extracted_roles  = []
+resume_text      = ""
 
 if uploaded:
-    # Save file
-    upload_dir = os.path.join("uploads", str(user_id))
+    # Save resume
+    upload_dir = f"uploads/{user_id}"
     os.makedirs(upload_dir, exist_ok=True)
-    resume_path = os.path.join(upload_dir, "resume_base.pdf")
+    resume_path = f"{upload_dir}/resume_base.pdf"
 
     with open(resume_path, "wb") as f:
-        f.write(uploaded.getbuffer())
+        f.write(uploaded.read())
 
-    with st.spinner("Resume parse ho raha hai..."):
-        parsed = parse_resume(resume_path)
-
-    if parsed.get("error"):
-        st.error(parsed["error"])
-    else:
-        st.success("✅ Resume parsed!")
-        col1, col2 = st.columns(2)
-        col1.metric("Skills Found", len(parsed.get("skills", [])))
-        col2.metric("Experience",   f"{parsed.get('experience_years', 0)} years")
-        st.session_state["parsed_resume"] = parsed
-        st.session_state["resume_path"]   = resume_path
-
-# ── Step 2 — Details Form ──────────────────────
-st.divider()
-st.subheader("Step 2 — Details Fill karo")
-
-parsed = st.session_state.get("parsed_resume", {})
-
-with st.form("profile_form"):
-    col1, col2 = st.columns(2)
-
-    with col1:
-        name     = st.text_input("Full Name",  value=parsed.get("name", "") or "")
-        phone    = st.text_input("Phone",      value=parsed.get("phone", "") or "")
-        linkedin = st.text_input("LinkedIn URL", value=parsed.get("linkedin", "") or "")
-        github   = st.text_input("GitHub URL",   value=parsed.get("github", "") or "")
-        exp      = st.number_input(
-            "Experience (years)",
-            min_value = 0,
-            max_value = 20,
-            value     = parsed.get("experience_years", 0) or 0
-        )
-
-    with col2:
-        skills = st.text_area(
-            "Skills (comma separated)",
-            value = ", ".join(parsed.get("skills", []))
-        )
-        target_roles = st.text_area(
-            "Target Roles (comma separated)",
-            placeholder = "AI Engineer, ML Intern, Backend Developer"
-        )
-        target_industries = st.text_area(
-            "Target Industries",
-            placeholder = "AI, SaaS, Fintech, EdTech"
-        )
-
-    st.divider()
-    st.subheader("📍 Preferences")
-
-    col3, col4 = st.columns(2)
-    with col3:
-        locations    = st.text_input(
-            "Preferred Locations",
-            placeholder = "Remote, Bangalore, Delhi"
-        )
-        job_type     = st.selectbox("Job Type", ["both", "internship", "job"])
-    with col4:
-        company_size = st.selectbox("Company Size", ["1-50", "51-200", "201-500", "any"])
-        min_score    = st.slider("Minimum Fit Score (%)", 30, 80, 50)
-
-    st.divider()
-    st.subheader("📧 Gmail Setup")
-    st.caption("Emails bhejne ke liye — App Password use karo, main password nahi")
-
-    gmail   = st.text_input("Gmail Address")
-    app_pwd = st.text_input("Gmail App Password", type="password")
-
-    submitted = st.form_submit_button("💾 Save Profile", type="primary")
-
-    if submitted:
-        db = SessionLocal()
+    # Extract text from PDF
+    with st.spinner("Resume read kar rahe hain..."):
         try:
-            profile = db.query(UserProfile).filter(
-                UserProfile.user_id == user_id
-            ).first()
-
-            if not profile:
-                profile = UserProfile(user_id=user_id)
-                db.add(profile)
-
-            profile.name                   = name
-            profile.phone                  = phone
-            profile.linkedin               = linkedin
-            profile.github                 = github
-            profile.experience_years       = exp
-            profile.skills                 = json.dumps([s.strip() for s in skills.split(",") if s.strip()])
-            profile.target_roles           = json.dumps([r.strip() for r in target_roles.split(",") if r.strip()])
-            profile.target_industries      = json.dumps([i.strip() for i in target_industries.split(",") if i.strip()])
-            profile.preferred_locations    = json.dumps([l.strip() for l in locations.split(",") if l.strip()])
-            profile.preferred_type         = job_type
-            profile.preferred_company_size = company_size
-            profile.min_fit_score          = min_score
-            profile.gmail_address          = gmail
-            profile.gmail_app_password     = app_pwd
-            profile.resume_path            = st.session_state.get("resume_path", "")
-
-            db.commit()
-            st.success("✅ Profile saved!")
-            st.balloons()
-            st.switch_page("pages/3_jobs.py")
-
+            with pdfplumber.open(resume_path) as pdf:
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    if text:
+                        resume_text += text + "\n"
         except Exception as e:
-            db.rollback()
-            st.error(str(e))
-        finally:
-            db.close()
+            st.error(f"PDF read error: {e}")
+
+    if resume_text:
+        # Groq se skills + roles extract karo
+        with st.spinner("Skills extract kar rahe hain..."):
+            try:
+                prompt = f"""
+You are a resume parser. Extract information from this resume.
+
+Return ONLY a JSON object, no markdown, no explanation:
+{{
+    "skills": ["skill1", "skill2", ...],
+    "target_roles": ["role1", "role2", ...],
+    "experience_years": 0,
+    "education": "degree and field",
+    "current_role": "current or last role",
+    "summary": "2-3 line professional summary"
+}}
+
+Rules:
+- skills: ALL technical skills (languages, frameworks, tools, platforms)
+- target_roles: roles this person is suitable for based on their background
+- Be comprehensive — extract everything mentioned
+- target_roles should be job titles like "AI Engineer", "ML Engineer" etc
+
+Resume:
+{resume_text[:4000]}
+"""
+                res = client.chat.completions.create(
+                    model    = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile"),
+                    messages = [{"role": "user", "content": prompt}],
+                    max_tokens  = 800,
+                    temperature = 0.1
+                )
+                raw = res.choices[0].message.content.strip()
+                raw = raw.replace("```json", "").replace("```", "").strip()
+
+                parsed           = json.loads(raw)
+                extracted_skills = parsed.get("skills", [])
+                extracted_roles  = parsed.get("target_roles", [])
+
+                st.session_state["resume_path"]    = resume_path
+                st.session_state["resume_text"]    = resume_text
+                st.session_state["extracted_skills"] = extracted_skills
+                st.session_state["extracted_roles"]  = extracted_roles
+                st.session_state["resume_parsed"]    = parsed
+
+                st.success(
+                    f"✅ Resume parsed — "
+                    f"{len(extracted_skills)} skills, "
+                    f"{len(extracted_roles)} roles found"
+                )
+
+            except Exception as e:
+                st.error(f"Skill extraction error: {e}")
+                st.text(f"Raw response: {raw[:300] if 'raw' in dir() else 'N/A'}")
+
+# Show extracted info
+if st.session_state.get("resume_parsed"):
+    parsed = st.session_state["resume_parsed"]
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info(f"**Current Role:** {parsed.get('current_role', 'N/A')}")
+        st.info(f"**Education:** {parsed.get('education', 'N/A')}")
+        st.info(f"**Experience:** {parsed.get('experience_years', 0)} years")
+    with col2:
+        st.info(f"**Summary:** {parsed.get('summary', 'N/A')}")
+
+    st.write("**Extracted Skills:**")
+    skills = st.session_state.get("extracted_skills", [])
+    st.write(", ".join(skills) if skills else "No skills found")
+
+    st.write("**Suggested Roles:**")
+    roles = st.session_state.get("extracted_roles", [])
+    st.write(", ".join(roles) if roles else "No roles found")
+
+st.divider()
+
+# ─────────────────────────────────────────────
+# JOB PREFERENCES
+# ─────────────────────────────────────────────
+
+st.subheader("🎯 Job Preferences")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    preferred_type = st.selectbox(
+        "Kya dhundh rahe ho?",
+        ["both", "internship", "job"],
+        format_func=lambda x: {
+            "both"      : "Internship + Job dono",
+            "internship": "Sirf Internship",
+            "job"       : "Sirf Job"
+        }[x]
+    )
+
+with col2:
+    location = st.selectbox(
+        "Location Preference",
+        ["remote", "india", "anywhere"],
+        format_func=lambda x: {
+            "remote"  : "Remote Only",
+            "india"   : "India Only",
+            "anywhere": "Anywhere"
+        }[x]
+    )
+
+# Domain multi-select
+st.write("**Domains** (jo relevant hain select karo)")
+domain_options = {
+    "ai_ml"      : "🤖 AI / Machine Learning",
+    "data_science": "📊 Data Science",
+    "software"   : "💻 Software Engineering",
+    "backend"    : "⚙️ Backend Development",
+    "web_dev"    : "🌐 Web Development",
+    "full_stack" : "🔄 Full Stack",
+    "product"    : "📱 Product Management",
+}
+
+# Default select karo based on extracted roles
+default_domains = []
+if st.session_state.get("extracted_roles"):
+    roles_lower = " ".join(
+        st.session_state["extracted_roles"]
+    ).lower()
+    if any(k in roles_lower for k in ["ai", "ml", "machine learning"]):
+        default_domains.append("ai_ml")
+    if any(k in roles_lower for k in ["data", "analyst"]):
+        default_domains.append("data_science")
+    if any(k in roles_lower for k in ["software", "engineer"]):
+        default_domains.append("software")
+    if any(k in roles_lower for k in ["backend", "python", "django"]):
+        default_domains.append("backend")
+    if any(k in roles_lower for k in ["web", "frontend", "react"]):
+        default_domains.append("web_dev")
+    if any(k in roles_lower for k in ["full stack", "fullstack"]):
+        default_domains.append("full_stack")
+
+selected_domains = []
+cols = st.columns(3)
+for i, (key, label) in enumerate(domain_options.items()):
+    with cols[i % 3]:
+        if st.checkbox(
+            label,
+            value = key in default_domains,
+            key   = f"domain_{key}"
+        ):
+            selected_domains.append(key)
+
+# Target roles — editable
+st.write("**Target Roles** (edit kar sakte ho)")
+default_roles_text = ", ".join(
+    st.session_state.get("extracted_roles", [
+        "Software Engineer", "AI Engineer"
+    ])
+)
+target_roles_text = st.text_area(
+    "Roles (comma separated)",
+    value  = default_roles_text,
+    height = 80,
+    help   = "Resume se auto-fill hua hai — edit kar sakte ho"
+)
+
+# Additional skills — editable
+st.write("**Skills** (edit kar sakte ho)")
+default_skills_text = ", ".join(
+    st.session_state.get("extracted_skills", [])
+)
+skills_text = st.text_area(
+    "Skills (comma separated)",
+    value  = default_skills_text,
+    height = 80,
+    help   = "Resume se auto-fill hua hai"
+)
+
+st.divider()
+
+# ─────────────────────────────────────────────
+# GMAIL SETTINGS
+# ─────────────────────────────────────────────
+
+st.subheader("📧 Gmail Settings")
+st.caption(
+    "Email bhejne ke liye Gmail App Password chahiye. "
+    "[Setup guide](https://support.google.com/accounts/answer/185833)"
+)
+
+col1, col2 = st.columns(2)
+with col1:
+    gmail_address = st.text_input(
+        "Gmail Address",
+        placeholder="yourname@gmail.com"
+    )
+with col2:
+    gmail_password = st.text_input(
+        "App Password",
+        type       = "password",
+        placeholder= "xxxx xxxx xxxx xxxx"
+    )
+
+st.divider()
+
+# ─────────────────────────────────────────────
+# SAVE
+# ─────────────────────────────────────────────
+
+if st.button("💾 Save Profile", type="primary"):
+
+    # Validation
+    if not selected_domains:
+        st.error("Kam se kam ek domain select karo")
+        st.stop()
+
+    if not target_roles_text.strip():
+        st.error("Target roles likho")
+        st.stop()
+
+    target_roles = [
+        r.strip()
+        for r in target_roles_text.split(",")
+        if r.strip()
+    ]
+    skills = [
+        s.strip()
+        for s in skills_text.split(",")
+        if s.strip()
+    ]
+
+    # Prefs save karo session mein
+    prefs = {
+        "preferred_type" : preferred_type,
+        "domains"        : selected_domains,
+        "target_roles"   : target_roles,
+        "skills"         : skills,
+        "location"       : location,
+    }
+    st.session_state["prefs"]      = prefs
+    st.session_state["gmail"]      = gmail_address
+    st.session_state["gmail_pass"] = gmail_password
+
+    # DB mein save karo
+    db = SessionLocal()
+    try:
+        profile = db.query(UserProfile).filter(
+            UserProfile.user_id == user_id
+        ).first()
+
+        if not profile:
+            profile = UserProfile(user_id=user_id)
+            db.add(profile)
+
+        profile.preferred_type      = preferred_type
+        profile.preferred_locations = json.dumps([location])
+        profile.target_roles        = json.dumps(target_roles)
+        profile.skills              = json.dumps(skills)
+        profile.domains             = json.dumps(selected_domains)
+        profile.resume_path         = st.session_state.get(
+            "resume_path", ""
+        )
+        profile.gmail_address       = gmail_address
+        profile.min_fit_score       = 50
+
+        db.commit()
+        st.success("✅ Profile saved!")
+        st.switch_page("pages/3_apply.py")
+
+    except Exception as e:
+        st.error(f"Save error: {e}")
+    finally:
+        db.close()
