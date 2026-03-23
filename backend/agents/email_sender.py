@@ -1,6 +1,7 @@
 # backend/agents/email_sender.py
 
 import os
+import re
 import json
 import smtplib
 from email.mime.text        import MIMEText
@@ -11,6 +12,32 @@ from loguru                 import logger
 from dotenv                 import load_dotenv
 load_dotenv()
 
+
+# ─────────────────────────────────────────────
+# HELPER — angle-bracket email cleaner
+# ─────────────────────────────────────────────
+
+def _clean_email(raw: str) -> str:
+    """
+    "Name <email@domain.com>"  →  "email@domain.com"
+    "u003esecurity@domain.com" →  "security@domain.com"
+
+    When an email header like <security@playabl.ai> is naively str()-ed,
+    '<' gets dropped and '>' becomes the unicode escape u003e.
+    This extracts just the bare RFC-5321 address.
+    """
+    if not raw:
+        return raw
+    # First: strip any unicode escapes for angle brackets
+    raw = raw.replace("u003e", "").replace("u003c", "").strip()
+    # Then: extract bare email from "Name <email>" format
+    match = re.search(r'[\w\.\+\-]+@[\w\.\-]+\.\w+', raw)
+    return match.group(0) if match else raw.strip()
+
+
+# ─────────────────────────────────────────────
+# GMAIL CREDS
+# ─────────────────────────────────────────────
 
 def get_gmail_creds(user_id: int) -> dict:
     try:
@@ -29,12 +56,16 @@ def get_gmail_creds(user_id: int) -> dict:
             return {"error": "Gmail credentials nahi hain — onboarding complete karo"}
 
         return {
-            "email"   : profile.gmail_address,
-            "password": profile.gmail_app_password
+            "email"   : profile.gmail_address.strip(),
+            "password": profile.gmail_app_password.replace(" ", "").strip()
         }
     except Exception as e:
         return {"error": str(e)}
 
+
+# ─────────────────────────────────────────────
+# SENT LOG
+# ─────────────────────────────────────────────
 
 def get_sent_log(user_id: int) -> list:
     log_file = f"uploads/{user_id}/sent_emails/log.json"
@@ -55,6 +86,10 @@ def save_sent_log(user_id: int, log: list):
         json.dump(log, f, indent=2)
 
 
+# ─────────────────────────────────────────────
+# SEND EMAIL
+# ─────────────────────────────────────────────
+
 def send_email(
     user_id    : int,
     to_email   : str,
@@ -65,9 +100,13 @@ def send_email(
     company    : str = "",
     contact    : str = ""
 ) -> dict:
-    """
-    Gmail SMTP se email bhejo.
-    """
+    """Gmail SMTP se email bhejo."""
+
+    # FIX — clean the address before doing anything with it
+    to_email = _clean_email(to_email)
+    if cc:
+        cc = _clean_email(cc)
+
     creds = get_gmail_creds(user_id)
     if "error" in creds:
         return {"success": False, "error": creds["error"]}
@@ -96,7 +135,7 @@ def send_email(
                 f'attachment; filename="{os.path.basename(resume_path)}"'
             )
             msg.attach(part)
-            logger.info(f"  📎 Resume attached")
+            logger.info("  📎 Resume attached")
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(gmail_address, gmail_password)
@@ -136,9 +175,13 @@ def send_email(
         return {"success": False, "error": error}
 
     except Exception as e:
-        logger.error(f"Send error: {e}")
+        logger.error(f"Send error: {e}", exc_info=True)
         return {"success": False, "error": str(e)}
 
+
+# ─────────────────────────────────────────────
+# LOG
+# ─────────────────────────────────────────────
 
 def _log_sent(
     user_id: int,
@@ -149,7 +192,7 @@ def _log_sent(
     company: str = "",
     contact: str = ""
 ):
-    """JSON log + Google Sheets sync."""
+    """JSON log mein save karo + Google Sheets sync."""
     log = get_sent_log(user_id)
 
     log.append({
@@ -171,7 +214,7 @@ def _log_sent(
     save_sent_log(user_id, log)
     logger.info(f"  📝 Logged: {to}")
 
-    # ── Google Sheets sync ────────────────────
+    # Google Sheets sync
     try:
         from backend.utils.sheets_tracker import log_cold_email
         log_cold_email(
@@ -188,6 +231,10 @@ def _log_sent(
     except Exception as e:
         logger.warning(f"Sheets sync error: {e}")
 
+
+# ─────────────────────────────────────────────
+# PIPELINE ENTRY POINT
+# ─────────────────────────────────────────────
 
 def send_and_log(
     user_id    : int,
