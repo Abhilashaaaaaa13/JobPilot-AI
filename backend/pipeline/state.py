@@ -4,6 +4,10 @@ from typing import TypedDict, Annotated, Optional
 import operator
 
 
+# ─────────────────────────────────────────────
+# SHARED TYPES
+# ─────────────────────────────────────────────
+
 class ContactInfo(TypedDict):
     name    : str
     role    : str
@@ -11,39 +15,34 @@ class ContactInfo(TypedDict):
     verified: bool
 
 
-class JobResult(TypedDict):
-    title      : str
-    company    : str
-    location   : str
-    stipend    : str
-    description: str
-    url        : str
-    type       : str   # internship / job
-    source     : str
-
-
 class CompanyResult(TypedDict):
-    name       : str
-    website    : str
-    one_liner  : str
-    description: str
-    funding    : str
-    team_size  : str
-    location   : str
-    source     : str
-    contacts   : list[ContactInfo]
+    name             : str
+    website          : str
+    one_liner        : str
+    description      : str
+    funding          : str
+    team_size        : str
+    location         : str
+    source           : str
+    contacts         : list[ContactInfo]
+    # Research-enriched fields (populated by research_companies_node)
+    company_summary  : Optional[str]
+    recent_highlight : Optional[str]
+    ai_hook          : Optional[str]
+    tech_stack       : Optional[list[str]]
+    ai_related       : Optional[bool]
 
 
 class ResumeReview(TypedDict):
-    id                   : str
-    job_title            : str
-    company              : str
-    original_path        : str
-    optimized_path       : str
-    ats_before           : float
-    ats_after            : float
-    changes              : list[str]
-    decision             : Optional[str]  # accept / reject
+    id            : str
+    job_title     : str
+    company       : str
+    original_path : str
+    optimized_path: str
+    ats_before    : float
+    ats_after     : float
+    changes       : list[str]
+    decision      : Optional[str]   # accept / reject / None (auto-approved)
 
 
 class EmailReview(TypedDict):
@@ -64,34 +63,6 @@ class EmailReview(TypedDict):
 
 
 # ─────────────────────────────────────────────
-# TRACK A — Job Applications
-# ─────────────────────────────────────────────
-
-class TrackAState(TypedDict):
-    user_id  : int
-    thread_id: str
-    prefs    : dict
-
-    # Step 1 — Scraping
-    current_step  : str
-    errors        : Annotated[list, operator.add]
-
-    # Step 2 — Scraped results
-    scraped_jobs  : list[JobResult]
-
-    # Step 3 — User selects
-    selected_jobs : list[JobResult]
-
-    # Step 4 — Resume optimization
-    resume_reviews        : list[ResumeReview]
-    approved_resume_ids   : list[str]
-    rejected_resume_ids   : list[str]
-
-    # Step 5 — Applications sent
-    applications_sent: Annotated[list, operator.add]
-
-
-# ─────────────────────────────────────────────
 # TRACK B — Cold Outreach
 # ─────────────────────────────────────────────
 
@@ -106,12 +77,12 @@ class TrackBState(TypedDict):
     # Step 1 — Scraped companies
     scraped_companies : list[CompanyResult]
 
-    # Step 2 — User selects
+    # Step 2 — User selects (research enrichment happens after this)
     selected_companies: list[CompanyResult]
 
     # Step 3 — Resume optimization
     resume_reviews      : list[ResumeReview]
-    approved_resume_ids : list[str]
+    approved_resume_ids : list[str]   # empty = auto-approve all
     rejected_resume_ids : list[str]
 
     # Step 4 — Email generation
@@ -121,3 +92,6 @@ class TrackBState(TypedDict):
 
     # Step 5 — Emails sent
     emails_sent: Annotated[list, operator.add]
+
+    # Global feed — new startups (populated by scheduler, not pipeline)
+    new_companies_feed : list[CompanyResult]

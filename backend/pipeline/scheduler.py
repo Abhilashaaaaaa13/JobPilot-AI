@@ -9,24 +9,37 @@ def create_scheduler():
 
     # Har 6 ghante — reply check
     scheduler.add_job(
-        func         = _check_all_replies,
-        trigger      = "interval",
-        hours        = 6,
-        id           = "reply_check",
+        func             = _check_all_replies,
+        trigger          = "interval",
+        hours            = 6,
+        id               = "reply_check",
         replace_existing = True
     )
 
     # Har 12 ghante — followup check
     scheduler.add_job(
-        func         = _check_all_followups,
-        trigger      = "interval",
-        hours        = 12,
-        id           = "followup_check",
+        func             = _check_all_followups,
+        trigger          = "interval",
+        hours            = 12,
+        id               = "followup_check",
+        replace_existing = True
+    )
+
+    # Har 24 ghante — global company feed refresh
+    scheduler.add_job(
+        func             = _refresh_company_feed,
+        trigger          = "interval",
+        hours            = 24,
+        id               = "company_feed_refresh",
         replace_existing = True
     )
 
     return scheduler
 
+
+# ─────────────────────────────────────────────
+# JOB HANDLERS
+# ─────────────────────────────────────────────
 
 def _check_all_replies():
     """Sab users ke inbox check karo."""
@@ -45,9 +58,7 @@ def _check_all_replies():
                         f"{result['replies']} new replies"
                     )
             except Exception as e:
-                logger.error(
-                    f"Reply check error user {user_id}: {e}"
-                )
+                logger.error(f"Reply check error user {user_id}: {e}")
     except Exception as e:
         logger.error(f"Reply scheduler error: {e}")
 
@@ -63,3 +74,21 @@ def _check_all_followups():
         )
     except Exception as e:
         logger.error(f"Followup scheduler error: {e}")
+
+
+def _refresh_company_feed():
+    """
+    Global company feed refresh karo.
+    YC / HN / Betalist se fresh startups scrape karo.
+    data/company_feed.json mein save karo.
+    Frontend ye file read karega — no user trigger needed.
+    """
+    try:
+        from backend.agents.feed_agent import refresh_feed
+        result = refresh_feed()
+        logger.info(
+            f"[Scheduler] Feed refreshed: "
+            f"{result.get('total', 0)} companies saved"
+        )
+    except Exception as e:
+        logger.error(f"Feed refresh error: {e}")

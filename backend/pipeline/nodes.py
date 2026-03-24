@@ -1,10 +1,9 @@
 # backend/pipeline/nodes.py
 
-from functools import partial
 from loguru import logger
 
 from backend.pipeline.state import (
-    TrackAState, TrackBState,
+    TrackBState,
     ResumeReview, EmailReview
 )
 from backend.agents import (
@@ -12,177 +11,8 @@ from backend.agents import (
     resume_agent,
     email_generator,
 )
-from backend.agents.email_sender import send_and_log
-
-
-# ═════════════════════════════════════════════
-# TRACK A NODES
-# ═════════════════════════════════════════════
-
-def scrape_jobs_node(state: TrackAState) -> dict:
-    """
-    Fresh scrape karo — no DB.
-    User prefs se domain + type lo.
-    """
-    logger.info(f"[Scrape Jobs] user {state['user_id']}")
-
-    try:
-        result = scraper_agent.run(
-            user_id = state["user_id"],
-            prefs   = state["prefs"]
-        )
-
-        jobs = result.get("track_a", [])
-        logger.info(f"[Scrape Jobs] {len(jobs)} jobs found")
-
-        return {
-            "current_step": "awaiting_job_selection",
-            "scraped_jobs": jobs,
-            "errors"      : []
-        }
-
-    except Exception as e:
-        logger.error(f"[Scrape Jobs] Error: {e}")
-        return {
-            "current_step": "awaiting_job_selection",
-            "scraped_jobs": [],
-            "errors"      : [str(e)]
-        }
-
-
-def optimize_resumes_a_node(state: TrackAState) -> dict:
-    """
-    Selected jobs ke liye resume optimize karo.
-    """
-    logger.info(f"[Resume A] Starting")
-
-    selected = state.get("selected_jobs", [])
-    if not selected:
-        return {
-            "current_step" : "awaiting_resume_review",
-            "resume_reviews": [],
-            "errors"        : ["No jobs selected"]
-        }
-
-    reviews = []
-
-    for job in selected:
-        try:
-            result = resume_agent.optimize_for_job(
-                user_id  = state["user_id"],
-                job_title= job["title"],
-                company  = job["company"],
-                job_desc = job["description"]
-            )
-
-            if result.get("error"):
-                continue
-
-            review: ResumeReview = {
-                "id"            : f"job_{job['url'][-20:]}",
-                "job_title"     : job["title"],
-                "company"       : job["company"],
-                "original_path" : result["original_path"],
-                "optimized_path": result["optimized_path"],
-                "ats_before"    : result["ats_before"],
-                "ats_after"     : result["ats_after"],
-                "changes"       : result["changes"],
-                "decision"      : None
-            }
-            reviews.append(review)
-            logger.info(
-                f"  ✅ {job['title']} @ {job['company']} "
-                f"ATS: {result['ats_before']}→{result['ats_after']}"
-            )
-
-        except Exception as e:
-            logger.error(f"Resume opt error: {e}")
-            continue
-
-    return {
-        "current_step" : "awaiting_resume_review",
-        "resume_reviews": reviews
-    }
-
-
-def apply_node(state: TrackAState) -> dict:
-    """
-    Approved resumes ke liye apply karo.
-    Email send karo ya link save karo.
-    """
-    logger.info("[Apply] Starting")
-
-    approved_ids  = set(state.get("approved_resume_ids", []))
-    reviews       = state.get("resume_reviews", [])
-    selected_jobs = state.get("selected_jobs", [])
-    applications  = []
-
-    for job in selected_jobs:
-        job_id = f"job_{job['url'][-20:]}"
-
-        # Resume path decide karo
-        review = next(
-            (r for r in reviews if r["id"] == job_id), None
-        )
-        if review:
-            resume_path = (
-                review["optimized_path"]
-                if job_id in approved_ids
-                else review["original_path"]
-            )
-        else:
-            resume_path = None
-
-        try:
-            email_data = email_generator.generate_job_email(
-                user_id  = state["user_id"],
-                job_title= job["title"],
-                company  = job["company"],
-                job_desc = job["description"]
-            )
-
-            if not email_data.get("contact_email"):
-                # No email — save link for manual apply
-                applications.append({
-                    "company"   : job["company"],
-                    "title"     : job["title"],
-                    "apply_url" : job["url"],
-                    "type"      : "manual",
-                    "status"    : "link_saved"
-                })
-                logger.info(
-                    f"  🔗 Manual: {job['title']} @ {job['company']}"
-                )
-                continue
-
-            result = send_and_log(
-                user_id     = state["user_id"],
-                to_email    = email_data["contact_email"],
-                subject     = email_data["subject"],
-                body        = email_data["body"],
-                resume_path = resume_path
-            )
-
-            if result.get("success"):
-                applications.append({
-                    "company": job["company"],
-                    "title"  : job["title"],
-                    "email"  : email_data["contact_email"],
-                    "type"   : "email_sent",
-                    "status" : "sent"
-                })
-                logger.info(
-                    f"  ✅ Sent: {job['title']} @ {job['company']}"
-                )
-
-        except Exception as e:
-            logger.error(f"Apply error: {e}")
-            continue
-
-    return {
-        "current_step"    : "done",
-        "applications_sent": applications
-    }
+from backend.agents.email_sender  import send_and_log
+from backend.agents.research_agent import research_company
 
 
 # ═════════════════════════════════════════════
@@ -202,23 +32,69 @@ def scrape_companies_node(state: TrackBState) -> dict:
             prefs   = state["prefs"]
         )
         companies = result.get("track_b", [])
-        logger.info(
-            f"[Scrape Companies] {len(companies)} found"
-        )
+        logger.info(f"[Scrape Companies] {len(companies)} found")
 
         return {
-            "current_step"    : "awaiting_company_selection",
+            "current_step"     : "awaiting_company_selection",
             "scraped_companies": companies,
-            "errors"          : []
+            "errors"           : []
         }
 
     except Exception as e:
         logger.error(f"[Scrape Companies] Error: {e}")
         return {
-            "current_step"    : "awaiting_company_selection",
+            "current_step"     : "awaiting_company_selection",
             "scraped_companies": [],
-            "errors"          : [str(e)]
+            "errors"           : [str(e)]
         }
+
+
+def research_companies_node(state: TrackBState) -> dict:
+    """
+    Selected companies ko research karo — website scrape,
+    news search, Groq summary — taaki email personalized ho.
+    Runs BEFORE resume optimization & email generation.
+    """
+    logger.info("[Research] Starting")
+
+    selected = state.get("selected_companies", [])
+    if not selected:
+        return {
+            "current_step": "awaiting_resume_review",
+            "errors"      : ["No companies selected"]
+        }
+
+    enriched = []
+
+    for company in selected:
+        try:
+            research = research_company(
+                company_name = company["name"],
+                website      = company.get("website", ""),
+                description  = company.get("description", "")
+            )
+
+            # Merge research data into company dict
+            enriched_company = {
+                **company,
+                "company_summary" : research.get("company_summary",  company.get("description", "")),
+                "recent_highlight": research.get("recent_highlight", ""),
+                "ai_hook"         : research.get("ai_hook",          ""),
+                "tech_stack"      : research.get("tech_stack",       []),
+                "ai_related"      : research.get("ai_related",       False),
+            }
+            enriched.append(enriched_company)
+            logger.info(f"  ✅ Researched: {company['name']}")
+
+        except Exception as e:
+            logger.error(f"Research error {company['name']}: {e}")
+            enriched.append(company)   # push original if research fails
+            continue
+
+    return {
+        "current_step"     : "awaiting_resume_review",
+        "selected_companies": enriched
+    }
 
 
 def optimize_resumes_b_node(state: TrackBState) -> dict:
@@ -241,9 +117,9 @@ def optimize_resumes_b_node(state: TrackBState) -> dict:
     for company in selected:
         try:
             result = resume_agent.optimize_for_company(
-                user_id    = state["user_id"],
-                company    = company["name"],
-                description= company["description"]
+                user_id     = state["user_id"],
+                company     = company["name"],
+                description = company.get("company_summary") or company["description"]
             )
 
             if result.get("error"):
@@ -261,7 +137,10 @@ def optimize_resumes_b_node(state: TrackBState) -> dict:
                 "decision"      : None
             }
             reviews.append(review)
-            logger.info(f"  ✅ Resume ready: {company['name']}")
+            logger.info(
+                f"  ✅ Resume ready: {company['name']} "
+                f"ATS: {result['ats_before']}→{result['ats_after']}"
+            )
 
         except Exception as e:
             logger.error(f"Resume B error: {e}")
@@ -275,15 +154,16 @@ def optimize_resumes_b_node(state: TrackBState) -> dict:
 
 def generate_emails_node(state: TrackBState) -> dict:
     """
-    Approved resumes ke liye cold emails generate karo.
-    Gap + proposal angle.
+    Cold emails generate karo.
+    BUG FIX: agar approved_resume_ids empty hai (interrupt skip hua)
+    to optimized resume auto-use karo — default to best version.
     """
     logger.info("[Email Gen] Starting")
 
-    approved_ids = set(state.get("approved_resume_ids", []))
-    reviews      = state.get("resume_reviews", [])
-    selected     = state.get("selected_companies", [])
-    email_reviews= []
+    approved_ids  = set(state.get("approved_resume_ids", []))
+    reviews       = state.get("resume_reviews", [])
+    selected      = state.get("selected_companies", [])
+    email_reviews = []
 
     for company in selected:
         review_id = f"co_{company['name'][:20]}"
@@ -293,9 +173,14 @@ def generate_emails_node(state: TrackBState) -> dict:
 
         resume_path = None
         if review:
+            # FIX: agar approved_ids empty → auto-approve → use optimized
+            use_optimized = (
+                not approved_ids               # interrupt skip hua
+                or review_id in approved_ids   # user ne explicitly approve kiya
+            )
             resume_path = (
                 review["optimized_path"]
-                if review_id in approved_ids
+                if use_optimized
                 else review["original_path"]
             )
 
@@ -306,18 +191,20 @@ def generate_emails_node(state: TrackBState) -> dict:
         )
 
         if not contact:
-            logger.warning(
-                f"  ⚠️ No contact for {company['name']}"
-            )
+            logger.warning(f"  ⚠️ No contact for {company['name']}")
             continue
 
         try:
             result = email_generator.generate_cold_email(
-                user_id    = state["user_id"],
-                company    = company["name"],
-                description= company["description"],
-                one_liner  = company["one_liner"],
-                contact    = contact
+                user_id     = state["user_id"],
+                company     = company["name"],
+                description = company.get("company_summary") or company["description"],
+                one_liner   = company.get("one_liner", ""),
+                contact     = contact,
+                # Pass research extras for personalisation
+                ai_hook          = company.get("ai_hook",          ""),
+                recent_highlight = company.get("recent_highlight", ""),
+                tech_stack       = company.get("tech_stack",       []),
             )
 
             if result.get("error"):
@@ -331,9 +218,9 @@ def generate_emails_node(state: TrackBState) -> dict:
                 "contact_email" : contact["email"],
                 "subject"       : result["subject"],
                 "body"          : result["body"],
-                "gap_identified": result["gap"],
-                "proposal"      : result["proposal"],
-                "why_user_fits" : result["why_fits"],
+                "gap_identified": result.get("gap",       ""),
+                "proposal"      : result.get("proposal",  ""),
+                "why_user_fits" : result.get("why_fits",  ""),
                 "resume_path"   : resume_path,
                 "decision"      : None,
                 "edited_subject": None,
@@ -381,7 +268,9 @@ def send_emails_node(state: TrackBState) -> dict:
                 to_email    = review["contact_email"],
                 subject     = subject,
                 body        = body,
-                resume_path = review.get("resume_path")
+                resume_path = review.get("resume_path"),
+                company     = review["company"],
+                contact     = review["contact_name"],
             )
 
             if result.get("success"):
