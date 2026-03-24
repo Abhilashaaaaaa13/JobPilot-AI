@@ -48,11 +48,11 @@ Hard rules:
 6. Never start with "I hope", "I am writing", "My name is"
 7. Sound like a peer bringing value
 
-Return ONLY this JSON:
-{
+Return ONLY this JSON, no markdown, no explanation:
+{{
     "subject": "specific hook about their product gap",
     "body": "full email body",
     "gap": "the specific gap you identified",
     "proposal": "your concrete solution",
     "why_fits": "why candidate is right for this"
-}
+}}
