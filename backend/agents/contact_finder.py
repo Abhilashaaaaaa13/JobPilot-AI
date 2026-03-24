@@ -1,17 +1,15 @@
 # backend/agents/contact_finder.py
 # Company ke CEO/CTO/Founder/HR dhundho
 # Phir unka email find karo
+# DB-free — stateless, sirf company_name + website lega
 
 import json
 import requests as req
-from bs4 import BeautifulSoup
-from groq import Groq
-from sqlalchemy.orm import Session
-from backend.models.company import Company
-from backend.models.contact import Contact
-from backend.utils.email_verifier import find_best_email
-from backend.config import GROQ_API_KEY, LLM_MODEL, CONTACT_PRIORITY
+from bs4    import BeautifulSoup
+from groq   import Groq
 from loguru import logger
+
+from backend.config import GROQ_API_KEY, LLM_MODEL, CONTACT_PRIORITY
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -42,7 +40,7 @@ def scrape_team_page(website: str) -> str:
     text = ""
     for url in pages:
         try:
-            res  = req.get(url, headers=HEADERS, timeout=8)
+            res = req.get(url, headers=HEADERS, timeout=8)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.text, "html.parser")
                 for tag in soup(["script", "style"]):
@@ -65,11 +63,7 @@ def extract_people_with_groq(
 ) -> list:
     """
     Team page text se structured people list nikalo.
-    
-    Why Groq here?
-    HTML structure har site pe alag hoti hai.
-    Regex se reliable extract karna mushkil.
-    LLM text samajhta hai — koi bhi format.
+    LLM text samajhta hai — koi bhi HTML format ho.
     """
     prompt = f"""
 Extract people from this company team page.
@@ -95,13 +89,13 @@ If no people found, return empty array: []
 """
     try:
         response = client.chat.completions.create(
-            model      = LLM_MODEL,
-            messages   = [{"role": "user", "content": prompt}],
-            max_tokens = 400,
-            temperature= 0.1
+            model       = LLM_MODEL,
+            messages    = [{"role": "user", "content": prompt}],
+            max_tokens  = 400,
+            temperature = 0.1
         )
-        raw = response.choices[0].message.content.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
+        raw    = response.choices[0].message.content.strip()
+        raw    = raw.replace("```json", "").replace("```", "").strip()
         people = json.loads(raw)
         return people if isinstance(people, list) else []
 
@@ -115,133 +109,91 @@ If no people found, return empty array: []
 # ─────────────────────────────────────────────
 
 def get_priority(role: str) -> int:
-    """
-    Role ke basis pe priority assign karo.
-    Lower number = higher priority.
-    config.py ke CONTACT_PRIORITY se.
-    """
     role_lower = role.lower()
     for key, priority in CONTACT_PRIORITY.items():
         if key in role_lower:
             return priority
-    return 8  # Unknown role = lowest priority
+    return 8
 
 
 # ─────────────────────────────────────────────
-# MAIN — Find Contacts For Company
+# MAIN — Stateless Contact Finder
 # ─────────────────────────────────────────────
 
-def find_contacts(db: Session, company_id: int) -> dict:
+def find_contacts(
+    company_name: str,
+    website     : str,
+    description : str = ""
+) -> dict:
     """
-    Ek company ke contacts dhundho.
-    Already contacts hain? Skip karo.
+    Ek company ke contacts dhundho — DB-free.
+    Sirf company_name + website chahiye.
+    Returns dict with 'contacts' list.
+
+    Called by:
+    - research_companies_node (pipeline)
+    - feed_agent (scheduler)
+    - API endpoints directly
     """
-    company = db.query(Company).filter(
-        Company.id == company_id
-    ).first()
+    if not website:
+        return {"company": company_name, "contacts": []}
 
-    if not company:
-        return {"error": "Company nahi mili"}
+    logger.info(f"👤 Finding contacts: {company_name}")
 
-    # Already contacts hain?
-    existing = db.query(Contact).filter(
-        Contact.company_id == company_id
-    ).count()
-
-    if existing > 0:
-        return {
-            "message" : "Already found",
-            "contacts": existing
-        }
-
-    logger.info(f"👤 Finding contacts: {company.name}")
-
-    domain = company.website.replace("https://", "")\
-                            .replace("http://", "")\
-                            .rstrip("/").split("/")[0] \
-             if company.website else ""
-
-    # Step 1 — Team page scrape
-    team_text = scrape_team_page(company.website or "")
-
-    # Step 2 — Groq se people extract
-    people = extract_people_with_groq(
-        company.name,
-        team_text,
-        company.description or ""
+    domain = (
+        website.replace("https://", "")
+                .replace("http://", "")
+                .rstrip("/")
+                .split("/")[0]
     )
 
-    if not people:
-        logger.warning(f"  ⚠️ No people found for {company.name}")
-        return {"contacts": 0}
+    # Step 1 — Team page scrape
+    team_text = scrape_team_page(website)
 
-    saved = 0
+    # Step 2 — Groq se people extract
+    people = extract_people_with_groq(company_name, team_text, description)
+
+    if not people:
+        logger.warning(f"  ⚠️ No people found for {company_name}")
+        return {"company": company_name, "contacts": []}
+
+    # Import here to avoid circular — scraper_agent also used in pipeline
+    from backend.agents.scraper_agent import find_best_email
+
+    contacts = []
 
     for person in people:
+        name     = person.get("name",     "")
+        role     = person.get("role",     "")
+        linkedin = person.get("linkedin")
+
+        if not name:
+            continue
+
         try:
-            name     = person.get("name", "")
-            role     = person.get("role", "")
-            linkedin = person.get("linkedin")
-
-            if not name:
-                continue
-
-            # Email dhundho
             email_result = find_best_email(name, domain)
 
-            contact = Contact(
-                company_id       = company_id,
-                name             = name,
-                role             = role,
-                email            = email_result["email"],
-                linkedin_url     = linkedin,
-                confidence_score = email_result["confidence"],
-                source           = email_result["source"],
-                priority         = get_priority(role)
-            )
-
-            db.add(contact)
-            saved += 1
+            contacts.append({
+                "name"            : name,
+                "role"            : role,
+                "email"           : email_result.get("email"),
+                "linkedin_url"    : linkedin,
+                "confidence_score": 1.0 if email_result.get("verified") else 0.5,
+                "source"          : email_result.get("source", "pattern"),
+                "priority"        : get_priority(role),
+            })
 
             logger.info(
                 f"  ✅ {name} ({role}) "
-                f"→ {email_result['email']} "
-                f"[{email_result['source']}]"
+                f"→ {email_result.get('email')} "
+                f"[{email_result.get('source')}]"
             )
 
         except Exception as e:
-            logger.error(f"  ❌ Contact save error: {e}")
+            logger.error(f"  ❌ Contact error {name}: {e}")
             continue
-
-    db.commit()
 
     return {
-        "company"  : company.name,
-        "contacts" : saved
+        "company" : company_name,
+        "contacts": contacts
     }
-
-
-def find_all_pending_contacts(db: Session) -> dict:
-    """
-    Sab companies jinke contacts nahi hain.
-    """
-    # Companies jinke koi contact nahi
-    companies_with_contacts = db.query(Contact.company_id).distinct()
-    companies = db.query(Company).filter(
-        Company.id.notin_(companies_with_contacts),
-        Company.research_done == True
-    ).all()
-
-    if not companies:
-        return {"message": "Sab companies ke contacts hain", "done": 0}
-
-    done = 0
-    for company in companies:
-        try:
-            result = find_contacts(db, company.id)
-            done  += result.get("contacts", 0)
-        except Exception as e:
-            logger.error(f"Contact finder failed {company.name}: {e}")
-            continue
-
-    return {"total_contacts_found": done}

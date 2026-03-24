@@ -7,8 +7,9 @@ from loguru   import logger
 from dotenv   import load_dotenv
 load_dotenv()
 
-FOLLOWUP_AFTER_DAYS = int(os.getenv("FOLLOWUP_AFTER_DAYS", 4))
-MAX_FOLLOWUPS       = int(os.getenv("MAX_FOLLOWUPS",        2))
+FOLLOWUP_AFTER_DAYS     = int(os.getenv("FOLLOWUP_AFTER_DAYS",     4))
+FOLLOWUP_2_AFTER_DAYS   = int(os.getenv("FOLLOWUP_2_AFTER_DAYS",   7))   # 2nd followup longer gap
+MAX_FOLLOWUPS           = int(os.getenv("MAX_FOLLOWUPS",            2))
 
 
 def get_sent_log(user_id: int) -> list:
@@ -18,7 +19,7 @@ def get_sent_log(user_id: int) -> list:
     try:
         with open(log_file, "r") as f:
             return json.load(f)
-    except:
+    except Exception:
         return []
 
 
@@ -30,11 +31,23 @@ def save_sent_log(user_id: int, log: list):
         json.dump(log, f, indent=2)
 
 
+def _days_required(followup_count: int) -> int:
+    """
+    1st followup: 4 days after original send.
+    2nd followup: 7 days after 1st followup.
+    More breathing room so it doesn't feel spammy.
+    """
+    if followup_count == 0:
+        return FOLLOWUP_AFTER_DAYS      # 4
+    return FOLLOWUP_2_AFTER_DAYS        # 7
+
+
 def check_and_send_followups(user_id: int) -> dict:
     """
-    4 din baad reply nahi aaya → follow up bhejo.
+    Reply nahi aaya → follow up bhejo.
     Max 2 follow ups per email.
-    Sheets mein log karo.
+    1st followup: 4 din baad.
+    2nd followup: 7 din baad (1st ke baad).
     """
     from backend.agents.email_sender    import send_email
     from backend.agents.email_generator import generate_followup_email
@@ -52,35 +65,37 @@ def check_and_send_followups(user_id: int) -> dict:
         if entry.get("replied"):
             continue
 
-        # Skip agar max followups ho gaye
         followup_count = entry.get("followup_count", 0)
         if followup_count >= MAX_FOLLOWUPS:
             continue
 
-        # Kitne din ho gaye
+        # Kitne din baad followup karna hai (depends on count)
+        required_days = _days_required(followup_count)
+
         try:
             sent_at  = datetime.fromisoformat(entry["sent_at"])
             days_ago = (now - sent_at).days
-        except:
+        except Exception:
             continue
 
-        # Last followup ke baad kitne din
+        # Last followup ke baad check
         last_followup = entry.get("followup_at")
         if last_followup:
             try:
                 last_dt         = datetime.fromisoformat(last_followup)
                 days_since_last = (now - last_dt).days
-                if days_since_last < FOLLOWUP_AFTER_DAYS:
+                if days_since_last < required_days:
                     continue
-            except:
+            except Exception:
                 pass
         else:
-            if days_ago < FOLLOWUP_AFTER_DAYS:
+            # Original send ke baad
+            if days_ago < required_days:
                 continue
 
         logger.info(
-            f"  🔄 Follow up for {entry['to']} "
-            f"({days_ago} days ago)"
+            f"  🔄 Follow up #{followup_count + 1} for {entry['to']} "
+            f"({days_ago} days since original)"
         )
 
         contact = {
@@ -89,21 +104,19 @@ def check_and_send_followups(user_id: int) -> dict:
             "email": entry["to"]
         }
 
-        # Follow up email generate karo
         followup = generate_followup_email(
-            user_id         = user_id,
-            company         = entry.get("company", ""),
-            contact         = contact,
-            original_subject= entry.get("subject", ""),
-            original_body   = entry.get("body",    ""),
-            days_ago        = days_ago
+            user_id          = user_id,
+            company          = entry.get("company", ""),
+            contact          = contact,
+            original_subject = entry.get("subject", ""),
+            original_body    = entry.get("body",    ""),
+            days_ago         = days_ago
         )
 
         if followup.get("error"):
             logger.error(f"Generate error: {followup['error']}")
             continue
 
-        # Send karo
         result = send_email(
             user_id = user_id,
             to_email= entry["to"],
@@ -114,10 +127,10 @@ def check_and_send_followups(user_id: int) -> dict:
         )
 
         if result.get("success"):
-            entry["followup_sent"]   = True
-            entry["followup_at"]     = datetime.utcnow().isoformat()
-            entry["followup_count"]  = followup_count + 1
-            entry["status"]          = "followup_sent"
+            entry["followup_sent"]  = True
+            entry["followup_at"]    = datetime.utcnow().isoformat()
+            entry["followup_count"] = followup_count + 1
+            entry["status"]         = "followup_sent"
 
             followups_sent += 1
             sent_emails.append({
@@ -128,7 +141,6 @@ def check_and_send_followups(user_id: int) -> dict:
 
             logger.info(f"  ✅ Follow up sent to {entry['to']}")
 
-            # ── Google Sheets update ──────────────
             try:
                 from backend.utils.sheets_tracker import log_followup
                 log_followup(

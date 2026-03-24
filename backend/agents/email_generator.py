@@ -11,9 +11,7 @@ load_dotenv()
 client    = Groq(api_key=os.getenv("GROQ_API_KEY"))
 LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
 
-PROMPTS_DIR = os.path.join(
-    os.path.dirname(__file__), "..", "prompts"
-)
+PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "prompts")
 
 
 # ─────────────────────────────────────────────
@@ -31,26 +29,56 @@ def load_prompt(filename: str) -> str:
 
 
 def _clean_email_address(raw: str) -> str:
-    """
-    FIX — Email address se angle brackets strip karo.
-
-    'To' headers often come as: "Name <email@domain.com>"
-    Naively str()-ing them produces: u003eemail@domain.com
-    (because < is dropped and > becomes its unicode escape u003e)
-
-    This extracts just the bare email address.
-    """
+    """Extract bare email from 'Name <email@domain>' format."""
     if not raw:
-        return raw
-    # "Name <email@domain>" → "email@domain"
+        return ""
     match = re.search(r'[\w\.\+\-]+@[\w\.\-]+\.\w+', raw)
     return match.group(0) if match else raw.strip()
 
 
-def get_user_info(user_id: int) -> dict:
-    resume_path = f"uploads/{user_id}/resume_base.pdf"
+def _get_resume_path_from_db(user_id: int) -> str:
+    """
+    DB se user ka resume path fetch karo.
+    Hardcoded path assumption hataya — onboarding mein jo path
+    save hua tha wahi use hoga.
+    """
+    try:
+        from backend.database    import SessionLocal
+        from backend.models.user import UserProfile
 
-    if not os.path.exists(resume_path):
+        db      = SessionLocal()
+        profile = db.query(UserProfile).filter(
+            UserProfile.user_id == user_id
+        ).first()
+        db.close()
+
+        if profile and profile.resume_path and os.path.exists(profile.resume_path):
+            return profile.resume_path
+
+    except Exception as e:
+        logger.warning(f"DB resume path fetch error: {e}")
+
+    # Fallback — common paths try karo
+    fallbacks = [
+        f"uploads/{user_id}/resume_base.pdf",
+        f"uploads/{user_id}/resume.pdf",
+        f"uploads/{user_id}/cv.pdf",
+    ]
+    for path in fallbacks:
+        if os.path.exists(path):
+            return path
+
+    return ""
+
+
+def get_user_info(user_id: int) -> dict:
+    """
+    Resume path DB se lo, fir text extract karo,
+    fir Groq se name/skills/key_project nikalo.
+    """
+    resume_path = _get_resume_path_from_db(user_id)
+
+    if not resume_path:
         return {
             "name"       : "Candidate",
             "skills"     : [],
@@ -80,33 +108,36 @@ def get_user_info(user_id: int) -> dict:
     try:
         res = client.chat.completions.create(
             model    = LLM_MODEL,
-            messages = [{
-                "role"   : "user",
-                "content": f"""
-Extract from this resume. Return ONLY JSON, no markdown:
-{{
-    "name"       : "full name from resume",
-    "skills"     : ["skill1", "skill2", "skill3"],
-    "key_project": "most impressive project in 1 line under 20 words"
-}}
-
-Resume:
-{resume_text[:3000]}
-"""
-            }],
+            messages = [
+                {
+                    "role"   : "system",
+                    "content": (
+                        "Return ONLY valid JSON. "
+                        "No markdown. No explanation. "
+                        "No text outside the JSON object."
+                    )
+                },
+                {
+                    "role"   : "user",
+                    "content": (
+                        f"Extract from this resume:\n"
+                        f'{{"name":"full name","skills":["skill1","skill2"],'
+                        f'"key_project":"most impressive project in 1 line"}}\n\n'
+                        f"Resume:\n{resume_text[:2500]}"
+                    )
+                }
+            ],
             max_tokens  = 300,
             temperature = 0.1
         )
         raw    = res.choices[0].message.content.strip()
         parsed = _parse(raw)
-
         return {
             "name"       : parsed.get("name",        "Candidate"),
             "skills"     : parsed.get("skills",      []),
             "key_project": parsed.get("key_project", ""),
-            "resume_path": resume_path
+            "resume_path": resume_path,
         }
-
     except Exception as e:
         logger.error(f"User info extract error: {e}")
         return {
@@ -118,48 +149,27 @@ Resume:
 
 
 # ─────────────────────────────────────────────
-# JSON PARSER (shared by all Groq calls)
+# JSON PARSER
 # ─────────────────────────────────────────────
 
 def _parse(raw: str) -> dict:
-    """
-    Groq response ko clean karke JSON parse karo.
-
-    FIX — Control characters and bare newlines inside JSON string values
-    cause json.loads to raise:
-      "Invalid control character at: line N column M"
-      "Expecting ',' delimiter: ..."
-
-    Steps:
-    1. Strip markdown fences
-    2. Extract JSON object boundaries
-    3. Remove ASCII control chars (0x00–0x1F) EXCEPT tab/newline/CR
-       which are valid JSON whitespace outside strings
-    4. Replace bare newlines/tabs that landed INSIDE string values
-    """
-    # 1. Strip markdown
+    """Robust JSON parser — handles LLM quirks."""
     raw = raw.replace("```json", "").replace("```", "").strip()
 
-    # 2. Extract outermost { ... }
-    if not raw.startswith("{"):
-        start = raw.find("{")
-        end   = raw.rfind("}") + 1
-        if start != -1 and end > start:
-            raw = raw[start:end]
+    start = raw.find("{")
+    end   = raw.rfind("}") + 1
+    if start == -1 or end <= start:
+        raise ValueError(f"No JSON object found in: {raw[:200]}")
+    raw = raw[start:end]
 
-    # 3. Remove non-printable control characters (keep \t \n \r)
     raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw)
 
-    # 4. Replace bare (unescaped) newlines and tabs inside string values.
-    #    We do a simple state-machine scan: inside a JSON string literal,
-    #    a literal \n must be written as \\n.
     cleaned = []
     in_str  = False
     i       = 0
     while i < len(raw):
         ch = raw[i]
         if ch == '\\' and in_str:
-            # Escaped character — copy both chars verbatim
             cleaned.append(ch)
             i += 1
             if i < len(raw):
@@ -184,58 +194,50 @@ def _parse(raw: str) -> dict:
 # GROQ CALLER
 # ─────────────────────────────────────────────
 
-def call_groq(prompt: str, max_tokens: int = 600) -> dict:
+def call_groq(prompt: str, max_tokens: int = 800) -> dict:
     """
-    Groq call karo — JSON parse karo.
-    Agar fail → retry with stricter system prompt.
+    Call Groq with JSON-enforcing system prompt.
+    Two attempts with escalating strictness.
     """
-    # Attempt 1
-    try:
-        res = client.chat.completions.create(
-            model      = LLM_MODEL,
-            messages   = [{"role": "user", "content": prompt}],
-            max_tokens = max_tokens,
-            temperature= 0.7
-        )
-        raw = res.choices[0].message.content.strip()
-        return _parse(raw)
+    system = (
+        "You MUST return a single valid JSON object. "
+        "Rules: (1) No markdown fences. (2) No text before or after the JSON. "
+        "(3) All string values must be on ONE line — escape newlines as \\n. "
+        "(4) Do NOT truncate — complete every string value and close every bracket."
+    )
 
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning(f"First attempt failed: {e} — retrying...")
+    for attempt, temp in enumerate([0.6, 0.1], 1):
+        try:
+            res = client.chat.completions.create(
+                model    = LLM_MODEL,
+                messages = [
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": prompt}
+                ],
+                max_tokens  = max_tokens,
+                temperature = temp
+            )
+            raw    = res.choices[0].message.content.strip()
+            result = _parse(raw)
+            if result.get("subject") and result.get("body"):
+                return result
+            logger.warning(
+                f"Attempt {attempt}: missing subject/body, retrying"
+            )
+        except Exception as e:
+            logger.warning(f"Attempt {attempt} failed: {e}")
 
-    # Attempt 2 — explicit system prompt + lower temperature
-    try:
-        res2 = client.chat.completions.create(
-            model    = LLM_MODEL,
-            messages = [
-                {
-                    "role"   : "system",
-                    "content": (
-                        "Return ONLY a valid JSON object. "
-                        "No markdown, no code fences, no explanation. "
-                        "No text before or after the JSON. "
-                        "All string values must be on a single line — "
-                        "do NOT include literal newlines inside string values."
-                    )
-                },
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens  = max_tokens,
-            temperature = 0.1
-        )
-        raw2 = res2.choices[0].message.content.strip()
-        return _parse(raw2)
-
-    except Exception as e:
-        logger.error(f"Both attempts failed: {e}", exc_info=True)
-        return {}
+    logger.error("Both Groq attempts failed — returning empty")
+    return {}
 
 
 def get_optimized_resume_path(user_id: int, name: str) -> str:
-    safe = name.lower()\
-               .replace(" ", "_")\
-               .replace("/", "_")\
-               .replace(".", "_")[:30]
+    safe = (
+        name.lower()
+            .replace(" ", "_")
+            .replace("/", "_")
+            .replace(".", "_")[:30]
+    )
     return os.path.join(
         "uploads", str(user_id), "resumes", f"{safe}_resume.pdf"
     )
@@ -243,31 +245,41 @@ def get_optimized_resume_path(user_id: int, name: str) -> str:
 
 # ─────────────────────────────────────────────
 # TYPE 1 — Cold Email
+# Research data (ai_hook, recent_highlight, tech_stack)
+# now passed in and injected into prompt for personalisation.
 # ─────────────────────────────────────────────
 
 def generate_cold_email(
-    user_id    : int,
-    company    : str,
-    description: str,
-    one_liner  : str,
-    contact    : dict
+    user_id         : int,
+    company         : str,
+    description     : str,
+    one_liner       : str,
+    contact         : dict,
+    ai_hook         : str  = "",
+    recent_highlight: str  = "",
+    tech_stack      : list = None,
 ) -> dict:
     user_info       = get_user_info(user_id)
     prompt_template = load_prompt("cold_email_prompt.txt")
 
     if not prompt_template:
-        logger.error("cold_email_prompt.txt nahi mila")
-        return {"error": "Prompt file missing"}
+        return {"error": "cold_email_prompt.txt missing"}
+
+    tech_stack_str = ", ".join(tech_stack) if tech_stack else ""
 
     prompt = prompt_template.format(
-        user_name          = user_info["name"],
-        contact_name       = contact.get("name",  "Founder"),
-        contact_role       = contact.get("role",  "Founder"),
-        company_name       = company,
-        one_liner          = one_liner,
-        company_description= description[:400],
-        user_skills        = ", ".join(user_info["skills"][:10]),
-        key_project        = user_info["key_project"],
+        user_name           = user_info["name"],
+        contact_name        = contact.get("name",  "Founder"),
+        contact_role        = contact.get("role",  "Founder"),
+        company_name        = company,
+        one_liner           = one_liner,
+        company_description = description[:400],
+        user_skills         = ", ".join(user_info["skills"][:10]),
+        key_project         = user_info["key_project"],
+        # Research-enriched fields for personalisation
+        ai_hook             = ai_hook          or "N/A",
+        recent_highlight    = recent_highlight or "N/A",
+        tech_stack          = tech_stack_str   or "N/A",
     )
 
     result = call_groq(prompt)
@@ -278,8 +290,6 @@ def generate_cold_email(
     if not os.path.exists(resume_path):
         resume_path = user_info["resume_path"]
 
-    # FIX — clean contact email before returning
-    raw_email = contact.get("email", "")
     return {
         "subject"      : result.get("subject",  ""),
         "body"         : result.get("body",      ""),
@@ -288,73 +298,13 @@ def generate_cold_email(
         "why_fits"     : result.get("why_fits",  ""),
         "contact_name" : contact.get("name",     ""),
         "contact_role" : contact.get("role",     ""),
-        "contact_email": _clean_email_address(raw_email),
-        "resume_path"  : resume_path
+        "contact_email": _clean_email_address(contact.get("email", "")),
+        "resume_path"  : resume_path,
     }
 
 
 # ─────────────────────────────────────────────
-# TYPE 2 — Job Application Email
-# ─────────────────────────────────────────────
-
-def generate_job_email(
-    user_id         : int,
-    job_title       : str,
-    company         : str,
-    job_desc        : str,
-    contact         : dict = None,
-    experience_years: int  = 0,    # FIX — accept from caller instead of hardcoding
-    company_summary : str  = "",
-    tech_stack      : str  = ""
-) -> dict:
-    user_info       = get_user_info(user_id)
-    prompt_template = load_prompt("job_email_prompt.txt")
-
-    if not prompt_template:
-        logger.error("job_email_prompt.txt nahi mila")
-        return {"error": "Prompt file missing"}
-
-    contact_name  = contact.get("name",  "Hiring Manager") if contact else "Hiring Manager"
-    contact_role  = contact.get("role",  "")               if contact else ""
-    raw_email     = contact.get("email", "")               if contact else ""
-    contact_email = _clean_email_address(raw_email)        # FIX — clean on the way out
-
-    prompt = prompt_template.format(
-        user_name        = user_info["name"],
-        contact_name     = contact_name,
-        contact_role     = contact_role,
-        company_name     = company,
-        job_title        = job_title,
-        job_description  = job_desc[:600],
-        user_skills      = ", ".join(user_info["skills"][:10]),
-        key_project      = user_info["key_project"],
-        experience_years = experience_years,
-        company_summary  = company_summary,
-        tech_stack       = tech_stack
-    )
-
-    result = call_groq(prompt)
-    if not result:
-        return {"error": "Email generation failed"}
-
-    resume_path = get_optimized_resume_path(user_id, company)
-    if not os.path.exists(resume_path):
-        resume_path = user_info["resume_path"]
-
-    return {
-        "subject"       : result.get("subject",                ""),
-        "body"          : result.get("body",                    ""),
-        "core_problem"  : result.get("core_problem_identified", ""),
-        "idea_suggested": result.get("idea_suggested",          ""),
-        "contact_name"  : contact_name,
-        "contact_role"  : contact_role,
-        "contact_email" : contact_email,
-        "resume_path"   : resume_path
-    }
-
-
-# ─────────────────────────────────────────────
-# TYPE 3 — Follow Up Email
+# TYPE 2 — Follow Up Email
 # ─────────────────────────────────────────────
 
 def generate_followup_email(
@@ -369,8 +319,7 @@ def generate_followup_email(
     prompt_template = load_prompt("followup_prompt.txt")
 
     if not prompt_template:
-        logger.error("followup_prompt.txt nahi mila")
-        return {"error": "Prompt file missing"}
+        return {"error": "followup_prompt.txt missing"}
 
     prompt = prompt_template.format(
         user_name        = user_info["name"],
@@ -379,17 +328,16 @@ def generate_followup_email(
         contact_role     = contact.get("role", ""),
         days_ago         = days_ago,
         original_subject = original_subject,
-        original_proposal= original_body[:200]
+        original_proposal= original_body[:200],
     )
 
     result = call_groq(prompt, max_tokens=400)
     if not result:
         return {"error": "Followup generation failed"}
 
-    raw_email = contact.get("email", "")
     return {
         "subject"        : result.get("subject",         f"Re: {original_subject}"),
         "body"           : result.get("body",            ""),
         "new_value_added": result.get("new_value_added", ""),
-        "contact_email"  : _clean_email_address(raw_email)   # FIX — clean here too
+        "contact_email"  : _clean_email_address(contact.get("email", "")),
     }

@@ -40,7 +40,7 @@ def get_sent_log(user_id: int) -> list:
     try:
         with open(log_file, "r") as f:
             return json.load(f)
-    except:
+    except Exception:
         return []
 
 
@@ -77,14 +77,14 @@ def decode_body(msg) -> str:
                         decode=True
                     ).decode("utf-8", errors="ignore")
                     break
-                except:
+                except Exception:
                     continue
     else:
         try:
             body = msg.get_payload(
                 decode=True
             ).decode("utf-8", errors="ignore")
-        except:
+        except Exception:
             pass
     return body[:1000]
 
@@ -94,6 +94,11 @@ def check_inbox(user_id: int) -> dict:
     Gmail IMAP se inbox check karo.
     Replies detect karo.
     Sheets mein update karo.
+
+    BUG FIX: `status == "awaiting"` filter hata diya —
+    followup_sent entries ka status "followup_sent" hota hai,
+    unke replies bhi miss ho jaate the.
+    Ab sirf `replied == False` check kafi hai.
     """
     creds = get_gmail_creds(user_id)
     if "error" in creds:
@@ -103,10 +108,10 @@ def check_inbox(user_id: int) -> dict:
     if not sent_log:
         return {"checked": 0, "replies": 0, "updated": []}
 
+    # FIX — status filter removed, only replied==False matters
     awaiting = [
         e for e in sent_log
         if not e.get("replied")
-        and e.get("status") == "awaiting"
     ]
 
     if not awaiting:
@@ -144,29 +149,28 @@ def check_inbox(user_id: int) -> dict:
 
                 is_reply = False
 
-                # Check 1 — sender matches
+                # Check 1 — sender matches any awaiting email
                 for ae in awaiting_emails:
                     if ae in sender:
                         is_reply = True
                         break
 
-                # Check 2 — Re: subject matches
+                # Check 2 — Re: subject matches any sent subject
                 if not is_reply and subject.lower().startswith("re:"):
                     orig = subject[3:].strip().lower()
                     for as_ in awaiting_subjects:
-                        if (orig in as_.lower()
-                                or as_.lower() in orig):
+                        if orig in as_.lower() or as_.lower() in orig:
                             is_reply = True
                             break
 
                 if not is_reply:
                     continue
 
-                # Log update karo
                 for entry in sent_log:
-                    if (entry["to"].lower() in sender
-                            and not entry.get("replied")):
-
+                    if (
+                        entry["to"].lower() in sender
+                        and not entry.get("replied")
+                    ):
                         entry["replied"]    = True
                         entry["reply_at"]   = datetime.utcnow().isoformat()
                         entry["status"]     = "replied"
@@ -174,11 +178,8 @@ def check_inbox(user_id: int) -> dict:
                         updated.append(entry["to"])
                         reply_count += 1
 
-                        logger.info(
-                            f"  📩 Reply from: {entry['to']}"
-                        )
+                        logger.info(f"  📩 Reply from: {entry['to']}")
 
-                        # ── Google Sheets update ──────────
                         try:
                             from backend.utils.sheets_tracker import (
                                 update_reply_status
@@ -189,9 +190,7 @@ def check_inbox(user_id: int) -> dict:
                                 reply_body    = body
                             )
                         except Exception as e:
-                            logger.warning(
-                                f"Sheets reply update error: {e}"
-                            )
+                            logger.warning(f"Sheets reply update error: {e}")
 
                         break
 
@@ -230,6 +229,6 @@ def get_all_users_with_sent_emails() -> list:
         if os.path.exists(log_file):
             try:
                 users.append(int(folder))
-            except:
+            except Exception:
                 continue
     return users

@@ -5,14 +5,12 @@ import sys
 import time
 import random
 import re
-import smtplib
-import dns.resolver
 import requests as req
-from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright
-from loguru import logger
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Generator
+from bs4                          import BeautifulSoup
+from playwright.async_api         import async_playwright
+from loguru                       import logger
+from concurrent.futures           import ThreadPoolExecutor, as_completed
+from typing                       import Generator
 
 import os
 from dotenv import load_dotenv
@@ -33,69 +31,6 @@ SKIP = [
     "test", "spam", "info", "privacy", "legal", "abuse"
 ]
 
-DOMAIN_INTERNSHIP_URLS = {
-    "ai_ml": [
-        "machine-learning-internship",
-        "artificial-intelligence-internship",
-        "data-science-internship",
-    ],
-    "web_dev": [
-        "web-development-internship",
-        "frontend-development-internship",
-        "react-internship",
-    ],
-    "backend": [
-        "python-django-internship",
-        "backend-development-internship",
-        "nodejs-internship",
-    ],
-    "data_science": [
-        "data-science-internship",
-        "data-analytics-internship",
-        "business-analytics-internship",
-    ],
-    "software": [
-        "computer-science-internship",
-        "software-development-internship",
-    ],
-    "full_stack": [
-        "full-stack-internship",
-        "mern-stack-internship",
-    ],
-    "product": [
-        "product-management-internship",
-    ],
-}
-
-DOMAIN_JOB_URLS = {
-    "ai_ml": [
-        "machine-learning-job",
-        "artificial-intelligence-job",
-        "data-science-job",
-    ],
-    "web_dev": [
-        "web-development-job",
-        "frontend-development-job",
-    ],
-    "backend": [
-        "python-job",
-        "backend-development-job",
-    ],
-    "data_science": [
-        "data-science-job",
-        "data-analytics-job",
-    ],
-    "software": [
-        "software-development-job",
-    ],
-    "full_stack": [
-        "full-stack-job",
-    ],
-    "product": [
-        "product-management-job",
-    ],
-}
-
 
 # ═════════════════════════════════════════════
 # HELPERS
@@ -105,22 +40,27 @@ def random_delay():
     time.sleep(random.uniform(1, 2))
 
 
-def get_domain(website):
-    return website.replace("https://", "")\
-                  .replace("http://", "")\
-                  .rstrip("/").split("/")[0]
+def get_domain(website: str) -> str:
+    return (
+        website.replace("https://", "")
+                .replace("http://", "")
+                .rstrip("/")
+                .split("/")[0]
+    )
 
 
-def is_relevant(title, desc, roles):
+def is_relevant(title: str, desc: str, roles: list) -> bool:
     text = (title + " " + desc).lower()
     return any(r.lower() in text for r in roles)
 
 
 # ═════════════════════════════════════════════
 # EMAIL FINDING
+# — SMTP verify removed (slow + mostly blocked)
+# — Order: website scrape → Apollo → pattern fallback
 # ═════════════════════════════════════════════
 
-def find_emails_on_website(website):
+def find_emails_on_website(website: str) -> list:
     domain = get_domain(website)
     pages  = [
         website.rstrip("/"),
@@ -133,38 +73,34 @@ def find_emails_on_website(website):
     found = []
     for page in pages:
         try:
-            res  = req.get(page, headers=HEADERS, timeout=5)
+            res = req.get(page, headers=HEADERS, timeout=5)
             if res.status_code != 200:
                 continue
             soup = BeautifulSoup(res.text, "html.parser")
 
             for a in soup.find_all("a", href=True):
                 if "mailto:" in a["href"]:
-                    email = a["href"].replace(
-                        "mailto:", ""
-                    ).strip().split("?")[0]
+                    email = (
+                        a["href"].replace("mailto:", "")
+                                 .strip()
+                                 .split("?")[0]
+                    )
                     if "@" in email and not any(
                         s in email.lower() for s in SKIP
                     ):
-                        found.append({
-                            "email"   : email,
-                            "verified": True
-                        })
+                        found.append({"email": email, "verified": True})
 
             for email in re.findall(EMAIL_RE, res.text):
                 if domain in email and not any(
                     s in email.lower() for s in SKIP
                 ):
-                    found.append({
-                        "email"   : email,
-                        "verified": True
-                    })
+                    found.append({"email": email, "verified": True})
 
-        except:
+        except Exception:
             continue
 
-    seen   = set()
-    unique = []
+    # Deduplicate
+    seen, unique = set(), []
     for f in found:
         if f["email"] not in seen:
             seen.add(f["email"])
@@ -172,283 +108,79 @@ def find_emails_on_website(website):
     return unique
 
 
-def smtp_verify(email):
+def _apollo_lookup(first: str, last: str, domain: str) -> dict | None:
+    """Apollo API se email dhundho — free tier: 50 credits/month."""
+    if not APOLLO_API_KEY:
+        return None
     try:
-        domain = email.split("@")[1]
-        mx     = dns.resolver.resolve(domain, "MX")
-        host   = str(mx[0].exchange).rstrip(".")
-        with smtplib.SMTP(timeout=5) as s:
-            s.connect(host, 25)
-            s.helo("verify.com")
-            s.mail("v@v.com")
-            code, _ = s.rcpt(email)
-            return code == 250
-    except:
-        return False
+        res = req.post(
+            "https://api.apollo.io/v1/people/match",
+            json={
+                "first_name": first,
+                "last_name" : last,
+                "domain"    : domain
+            },
+            headers={
+                "Content-Type" : "application/json",
+                "Cache-Control": "no-cache",
+                "X-Api-Key"    : APOLLO_API_KEY
+            },
+            timeout=8
+        )
+        email = res.json().get("person", {}).get("email")
+        if email:
+            return {"email": email, "verified": True, "source": "apollo"}
+    except Exception as e:
+        logger.warning(f"Apollo lookup error: {e}")
+    return None
 
 
-def find_best_email(name, domain):
+def find_best_email(name: str, domain: str) -> dict:
+    """
+    Priority:
+    1. Website scrape (mailto links + regex)
+    2. Apollo API (if key available)
+    3. Pattern fallback — first@domain (verified=False, fast)
+
+    SMTP verify deliberately removed — too slow & mostly blocked.
+    """
+    # 1 — Website
     site = find_emails_on_website(f"https://{domain}")
     if site:
-        return site[0]
+        return {**site[0], "source": "website"}
 
     if not name:
-        return {"email": None, "verified": False}
+        return {"email": None, "verified": False, "source": "none"}
 
     parts = name.lower().strip().split()
-    first = parts[0] if parts else ""
-    last  = parts[-1] if len(parts) > 1 else ""
+    first = parts[0]            if parts           else ""
+    last  = parts[-1]           if len(parts) > 1  else ""
 
     if not first:
-        return {"email": None, "verified": False}
+        return {"email": None, "verified": False, "source": "none"}
 
-    patterns = [f"{first}@{domain}"]
+    # 2 — Apollo
+    apollo = _apollo_lookup(first, last, domain)
+    if apollo:
+        return apollo
+
+    # 3 — Pattern fallback (no SMTP verify — just generate)
     if last and last != first:
-        patterns += [
-            f"{first}.{last}@{domain}",
-            f"{first}{last}@{domain}",
-        ]
+        email = f"{first}.{last}@{domain}"
+    else:
+        email = f"{first}@{domain}"
 
-    for email in patterns:
-        if smtp_verify(email):
-            return {"email": email, "verified": True}
-
-    if APOLLO_API_KEY:
-        try:
-            res = req.post(
-                "https://api.apollo.io/v1/people/match",
-                json={
-                    "first_name": first,
-                    "last_name" : last,
-                    "domain"    : domain
-                },
-                headers={
-                    "Content-Type" : "application/json",
-                    "Cache-Control": "no-cache",
-                    "X-Api-Key"    : APOLLO_API_KEY
-                },
-                timeout=8
-            )
-            email = res.json().get("person", {}).get("email")
-            if email:
-                return {"email": email, "verified": True}
-        except:
-            pass
-
-    return {
-        "email"   : f"{first}@{domain}",
-        "verified": False
-    }
-
-
-# ═════════════════════════════════════════════
-# TRACK A — STREAMING GENERATORS
-# ═════════════════════════════════════════════
-
-def stream_internshala(prefs: dict) -> Generator:
-    """Yields jobs one by one as scraped."""
-    domains   = prefs.get("domains", ["ai_ml"])
-    pref_type = prefs.get("preferred_type", "both")
-    seen_urls = set()
-    urls      = []
-
-    if pref_type in ["internship", "both"]:
-        for domain in domains:
-            for slug in DOMAIN_INTERNSHIP_URLS.get(domain, []):
-                urls.append((
-                    f"https://internshala.com/internships/{slug}/",
-                    "internship"
-                ))
-
-    if pref_type in ["job", "both"]:
-        for domain in domains:
-            for slug in DOMAIN_JOB_URLS.get(domain, []):
-                urls.append((
-                    f"https://internshala.com/jobs/{slug}/",
-                    "job"
-                ))
-
-    for url, job_type in urls:
-        try:
-            res   = req.get(url, headers=HEADERS, timeout=10)
-            soup  = BeautifulSoup(res.text, "html.parser")
-            cards = soup.select(".individual_internship")
-
-            for card in cards:
-                try:
-                    title_el   = card.select_one(".job-internship-name")
-                    company_el = card.select_one(".company-name")
-                    loc_el     = card.select_one(".locations span")
-                    stipend_el = card.select_one(".stipend")
-                    link_el    = card.select_one("a.job-title-href")
-                    desc_el    = card.select_one(".job-internship-details")
-
-                    if not title_el or not company_el:
-                        continue
-
-                    title     = title_el.text.strip()
-                    company   = company_el.text.strip()
-                    apply_url = (
-                        "https://internshala.com" + link_el["href"]
-                        if link_el else url
-                    )
-
-                    if apply_url in seen_urls:
-                        continue
-                    seen_urls.add(apply_url)
-
-                    if not is_relevant(title, "", prefs.get("target_roles", [])):
-                        continue
-
-                    yield {
-                        "title"      : title,
-                        "company"    : company,
-                        "location"   : loc_el.text.strip() if loc_el else "Remote",
-                        "stipend"    : stipend_el.text.strip() if stipend_el else "Not mentioned",
-                        "description": desc_el.text.strip()[:300] if desc_el else title,
-                        "url"        : apply_url,
-                        "type"       : job_type,
-                        "source"     : "internshala"
-                    }
-
-                except:
-                    continue
-
-            random_delay()
-
-        except Exception as e:
-            logger.error(f"Internshala error: {e}")
-
-
-def stream_remotive(prefs: dict) -> Generator:
-    if prefs.get("preferred_type") == "internship":
-        return
-
-    try:
-        res      = req.get(
-            "https://remotive.com/api/remote-jobs?limit=50",
-            timeout=10
-        )
-        all_jobs = res.json().get("jobs", [])
-
-        for j in all_jobs:
-            title   = j.get("title", "")
-            company = j.get("company_name", "")
-            desc    = BeautifulSoup(
-                j.get("description", ""), "html.parser"
-            ).get_text()[:300]
-            url     = j.get("url", "")
-            loc     = j.get("candidate_required_location", "Remote")
-
-            if not is_relevant(title, desc, prefs.get("target_roles", [])):
-                continue
-
-            yield {
-                "title"      : title,
-                "company"    : company,
-                "location"   : loc,
-                "stipend"    : "Not mentioned",
-                "description": desc,
-                "url"        : url,
-                "type"       : "job",
-                "source"     : "remotive"
-            }
-
-    except Exception as e:
-        logger.error(f"Remotive error: {e}")
-
-
-def stream_unstop(prefs: dict) -> Generator:
-    try:
-        pref_type   = prefs.get("preferred_type", "both")
-        opportunity = (
-            "internships" if pref_type == "internship" else "jobs"
-        )
-        res   = req.get(
-            f"https://unstop.com/api/public/opportunity/search-result"
-            f"?opportunity={opportunity}&per_page=20&page=1",
-            headers=HEADERS, timeout=10
-        )
-        items = res.json().get("data", {}).get("data", [])
-
-        for item in items:
-            title   = item.get("title", "")
-            company = item.get("organisation", {}).get("name", "")
-            loc     = item.get("city", "Remote") or "Remote"
-            slug    = item.get("public_url", "")
-            url     = f"https://unstop.com/{slug}"
-            desc    = item.get("description", title)[:300]
-
-            if not is_relevant(title, desc, prefs.get("target_roles", [])):
-                continue
-
-            yield {
-                "title"      : title,
-                "company"    : company,
-                "location"   : loc,
-                "stipend"    : "Not mentioned",
-                "description": desc,
-                "url"        : url,
-                "type"       : opportunity[:-1],
-                "source"     : "unstop"
-            }
-
-    except Exception as e:
-        logger.error(f"Unstop error: {e}")
-
-
-def stream_yc_jobs(prefs: dict) -> Generator:
-    if prefs.get("preferred_type") == "internship":
-        return
-
-    try:
-        res   = req.get(
-            "https://www.workatastartup.com/jobs",
-            headers=HEADERS, timeout=15
-        )
-        soup  = BeautifulSoup(res.text, "html.parser")
-        cards = soup.select(".posting-title, .job-name")
-
-        for card in cards:
-            try:
-                title  = card.text.strip()
-                parent = card.find_parent("a")
-                url    = (
-                    "https://www.workatastartup.com" + parent["href"]
-                    if parent and parent.get("href") else ""
-                )
-                if not url or not title:
-                    continue
-
-                if not is_relevant(title, "", prefs.get("target_roles", [])):
-                    continue
-
-                yield {
-                    "title"      : title,
-                    "company"    : "YC Startup",
-                    "location"   : "Remote / SF",
-                    "stipend"    : "Not mentioned",
-                    "description": title,
-                    "url"        : url,
-                    "type"       : "job",
-                    "source"     : "yc_jobs"
-                }
-
-            except:
-                continue
-
-    except Exception as e:
-        logger.error(f"YC Jobs error: {e}")
+    return {"email": email, "verified": False, "source": "pattern"}
 
 
 # ═════════════════════════════════════════════
 # TRACK B — STREAMING GENERATORS
 # ═════════════════════════════════════════════
 
-def get_yc_founders(slug):
+def get_yc_founders(slug: str) -> list:
     try:
-        url  = f"https://www.ycombinator.com/companies/{slug}"
-        res  = req.get(url, headers=HEADERS, timeout=10)
+        url = f"https://www.ycombinator.com/companies/{slug}"
+        res = req.get(url, headers=HEADERS, timeout=10)
         if res.status_code != 200:
             return []
         text = BeautifulSoup(res.text, "html.parser").get_text()
@@ -462,7 +194,7 @@ def get_yc_founders(slug):
             )
         ))
         return [{"name": n, "role": "Founder"} for n in names[:4]]
-    except:
+    except Exception:
         return []
 
 
@@ -481,16 +213,16 @@ def stream_yc_companies(prefs: dict) -> Generator:
         ]
 
         for c in data:
-            name      = c.get("name", "")
-            website   = c.get("website", "")
-            one_liner = c.get("oneLiner", "") or ""
+            name      = c.get("name",            "")
+            website   = c.get("website",         "")
+            one_liner = c.get("oneLiner",        "") or ""
             long_desc = c.get("longDescription", "") or ""
             desc      = long_desc if long_desc else one_liner
-            batch     = c.get("batch", "")
-            slug      = c.get("slug", "")
+            batch     = c.get("batch",           "")
+            slug      = c.get("slug",            "")
             tags      = " ".join(c.get("tags", [])).lower()
             loc       = ", ".join(c.get("locations", []))
-            team_size = c.get("teamSize", "")
+            team_size = c.get("teamSize",        "")
 
             if not website or not name:
                 continue
@@ -526,7 +258,7 @@ def stream_yc_companies(prefs: dict) -> Generator:
                 "team_size"  : str(team_size),
                 "location"   : loc,
                 "source"     : "yc_api",
-                "contacts"   : contacts
+                "contacts"   : contacts,
             }
 
     except Exception as e:
@@ -591,7 +323,7 @@ def stream_hn_hiring(prefs: dict) -> Generator:
                         "verified": True,
                     }
                     for e in emails[:2]
-                ]
+                ],
             }
 
     except Exception as e:
@@ -635,7 +367,6 @@ async def _scrape_betalist_async(prefs: dict) -> list:
                     )
                     await sp.wait_for_timeout(1000)
 
-                    # Full description
                     full_desc = desc
                     try:
                         desc_el2 = await sp.query_selector(
@@ -643,42 +374,41 @@ async def _scrape_betalist_async(prefs: dict) -> list:
                         )
                         if desc_el2:
                             full_desc = (await desc_el2.inner_text()).strip()[:500]
-                    except:
+                    except Exception:
                         pass
 
-                    # Website
                     all_links = await sp.query_selector_all("a[href]")
                     website   = None
-
                     for a in all_links:
                         h = await a.get_attribute("href")
-                        if (h and h.startswith("http")
-                                and not any(d in h for d in skip_domains)):
+                        if (
+                            h
+                            and h.startswith("http")
+                            and not any(d in h for d in skip_domains)
+                        ):
                             website = h
                             break
 
                     await sp.close()
 
                     if not website:
-                        clean = name.lower().replace(" ", "").strip()
+                        clean   = name.lower().replace(" ", "").strip()
                         website = (
                             f"https://{clean}"
                             if "." in clean
                             else f"https://{clean}.com"
                         )
 
-                    domain      = get_domain(website)
                     site_emails = find_emails_on_website(website)
-                    contacts    = []
-
-                    if site_emails:
-                        for e in site_emails[:2]:
-                            contacts.append({
-                                "name"    : name,
-                                "role"    : "Contact",
-                                "email"   : e["email"],
-                                "verified": e["verified"],
-                            })
+                    contacts    = [
+                        {
+                            "name"    : name,
+                            "role"    : "Contact",
+                            "email"   : e["email"],
+                            "verified": e["verified"],
+                        }
+                        for e in site_emails[:2]
+                    ]
 
                     results.append({
                         "name"       : name,
@@ -689,10 +419,10 @@ async def _scrape_betalist_async(prefs: dict) -> list:
                         "team_size"  : "Unknown",
                         "location"   : "Remote",
                         "source"     : "betalist",
-                        "contacts"   : contacts
+                        "contacts"   : contacts,
                     })
 
-                except:
+                except Exception:
                     continue
 
         except Exception as e:
@@ -700,103 +430,99 @@ async def _scrape_betalist_async(prefs: dict) -> list:
         finally:
             try:
                 await browser.close()
-            except:
+            except Exception:
                 pass
 
     return results
 
 
-def stream_betalist(prefs: dict) -> Generator:
+def _run_betalist(prefs: dict) -> list:
+    """Betalist async → sync wrapper for ThreadPoolExecutor."""
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(
             asyncio.WindowsProactorEventLoopPolicy()
         )
-
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-
     try:
-        results = loop.run_until_complete(
-            _scrape_betalist_async(prefs)
-        )
-        for r in results:
-            yield r
+        return loop.run_until_complete(_scrape_betalist_async(prefs))
     except Exception as e:
-        logger.error(f"Betalist stream error: {e}")
+        logger.error(f"Betalist run error: {e}")
+        return []
     finally:
         loop.close()
 
 
-# ═════════════════════════════════════════════
-# PARALLEL SCRAPING
-# ═════════════════════════════════════════════
+def _run_yc(prefs: dict) -> list:
+    return list(stream_yc_companies(prefs))
 
-def scrape_track_a(prefs: dict) -> list:
-    """All Track A sources — returns list."""
-    jobs = []
-    for job in stream_internshala(prefs):
-        jobs.append(job)
-    for job in stream_remotive(prefs):
-        jobs.append(job)
-    for job in stream_unstop(prefs):
-        jobs.append(job)
-    for job in stream_yc_jobs(prefs):
-        jobs.append(job)
-    return jobs
 
+def _run_hn(prefs: dict) -> list:
+    return list(stream_hn_hiring(prefs))
+
+
+# ═════════════════════════════════════════════
+# PARALLEL SCRAPING — Track B only
+# ═════════════════════════════════════════════
 
 def scrape_track_b(prefs: dict) -> list:
-    """All Track B sources — returns list."""
+    """
+    YC + HN + Betalist parallel chalao.
+    ThreadPoolExecutor — Betalist (Playwright) slow hota hai,
+    parallel se overall time kam hoga.
+    """
     companies = []
-    for co in stream_yc_companies(prefs):
-        companies.append(co)
-    for co in stream_hn_hiring(prefs):
-        companies.append(co)
-    for co in stream_betalist(prefs):
-        companies.append(co)
+
+    scrapers = [
+        ("yc",       _run_yc,       prefs),
+        ("hn",       _run_hn,       prefs),
+        ("betalist", _run_betalist, prefs),
+    ]
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(fn, p): name
+            for name, fn, p in scrapers
+        }
+        for future in as_completed(futures):
+            source = futures[future]
+            try:
+                result = future.result()
+                companies.extend(result)
+                logger.info(f"  ✅ {source}: {len(result)} companies")
+            except Exception as e:
+                logger.error(f"  ❌ {source} failed: {e}")
+
     return companies
 
 
 def run(user_id: int, prefs: dict) -> dict:
     """
-    Parallel scraping — Track A + Track B simultaneously.
+    Track B scraping — parallel, returns companies only.
+    Track A removed.
     """
     logger.info(f"🚀 Scraper starting — user {user_id}")
-    logger.info(f"   Type   : {prefs.get('preferred_type')}")
     logger.info(f"   Domains: {prefs.get('domains')}")
     logger.info(f"   Roles  : {prefs.get('target_roles')}")
 
-    track_a = []
-    track_b = []
+    track_b = scrape_track_b(prefs)
 
-    # Parallel execution
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        future_a = executor.submit(scrape_track_a, prefs)
-        future_b = executor.submit(scrape_track_b, prefs)
-
-        track_a = future_a.result()
-        track_b = future_b.result()
-
-    logger.info(
-        f"✅ Done — {len(track_a)} jobs, "
-        f"{len(track_b)} companies"
-    )
+    logger.info(f"   Total  : {len(track_b)} companies")
 
     return {
-        "total_jobs"      : len(track_a),
+        "track_b"         : track_b,
         "total_companies" : len(track_b),
-        "track_a"         : track_a,
-        "track_b"         : track_b
     }
 
 
+# ─────────────────────────────────────────────
+# LOCAL TEST
+# ─────────────────────────────────────────────
 if __name__ == "__main__":
     prefs = {
-        "preferred_type": "both",
-        "domains"       : ["ai_ml", "data_science"],
-        "target_roles"  : ["ai engineer", "ml engineer", "data scientist"],
-        "location"      : "remote"
+        "domains"     : ["ai_ml", "data_science"],
+        "target_roles": ["ai engineer", "ml engineer", "data scientist"],
+        "location"    : "remote"
     }
     result = run(user_id=1, prefs=prefs)
-    logger.info(f"Jobs: {result['total_jobs']}")
     logger.info(f"Companies: {result['total_companies']}")

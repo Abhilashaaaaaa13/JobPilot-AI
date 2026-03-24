@@ -2,26 +2,22 @@
 # Company ke baare mein research karo
 # Taaki cold email personalized ho sake
 #
-# Why research zaroori hai?
-# Generic email: "I want to work at your company"
-# Personalized: "Maine dekha aap AI-powered
-# retail analytics bana rahe hain — maine
-# exactly aisa RAG system banaya hai"
-#
-# Second email open hoti hai, first nahi.
+# DB-free — stateless.
+# Input : company_name, website, description
+# Output: research dict (summary, ai_hook, tech_stack, etc.)
 
 import json
 import requests as req
-from bs4 import BeautifulSoup
-from groq import Groq
+from bs4              import BeautifulSoup
+from groq             import Groq
 from duckduckgo_search import DDGS
-from sqlalchemy.orm import Session
-from backend.models.company import Company
+from loguru           import logger
+
 from backend.config import (
-    GROQ_API_KEY, LLM_MODEL,
-    TAVILY_API_KEY
+    GROQ_API_KEY,
+    LLM_MODEL,
+    TAVILY_API_KEY,
 )
-from loguru import logger
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -41,12 +37,10 @@ def scrape_website(url: str) -> str:
     """
     Company website se text nikalo.
     /about aur /team pages most useful hain.
-    
-    Why multiple pages?
-    Homepage = marketing copy
-    /about   = actual mission, team info
-    /team    = founder names, emails
     """
+    if not url:
+        return ""
+
     pages = [
         url,
         url.rstrip("/") + "/about",
@@ -59,26 +53,21 @@ def scrape_website(url: str) -> str:
 
     for page_url in pages:
         try:
-            res  = req.get(page_url, headers=HEADERS, timeout=8)
+            res = req.get(page_url, headers=HEADERS, timeout=8)
             if res.status_code != 200:
                 continue
 
             soup = BeautifulSoup(res.text, "html.parser")
-
-            # Irrelevant tags hata do
-            for tag in soup(["script", "style", "nav",
-                              "footer", "header"]):
+            for tag in soup(["script", "style", "nav", "footer", "header"]):
                 tag.decompose()
 
-            text = soup.get_text(separator=" ", strip=True)
-
-            # Max 1000 chars per page — enough context
+            text           = soup.get_text(separator=" ", strip=True)
             combined_text += text[:1000] + "\n"
 
         except Exception:
             continue
 
-    return combined_text[:3000]  # Total max 3000 chars
+    return combined_text[:3000]
 
 
 # ─────────────────────────────────────────────
@@ -86,10 +75,6 @@ def scrape_website(url: str) -> str:
 # ─────────────────────────────────────────────
 
 def search_duckduckgo(company_name: str) -> str:
-    """
-    DuckDuckGo se recent news dhundho.
-    Free, no API key needed.
-    """
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(
@@ -103,15 +88,6 @@ def search_duckduckgo(company_name: str) -> str:
 
 
 def search_tavily(company_name: str) -> str:
-    """
-    Tavily se structured search results.
-    Better than DuckDuckGo for recent news.
-    Free: 1000 searches/month.
-    
-    Why Tavily aur DuckDuckGo dono?
-    Tavily = recent, structured, accurate
-    DuckDuckGo = fallback agar Tavily quota khatam
-    """
     if not TAVILY_API_KEY:
         return ""
 
@@ -127,9 +103,7 @@ def search_tavily(company_name: str) -> str:
             },
             timeout=10
         )
-        data = res.json()
-
-        # Answer + results combine karo
+        data    = res.json()
         answer  = data.get("answer", "")
         results = data.get("results", [])
         content = answer + " " + " ".join(
@@ -149,22 +123,14 @@ def search_tavily(company_name: str) -> str:
 def summarize_with_groq(
     company_name : str,
     website_text : str,
-    search_text  : str
+    search_text  : str,
+    base_desc    : str = ""
 ) -> dict:
-    """
-    Sab context Groq ko do.
-    Structured summary nikalo.
-    
-    Why JSON output?
-    Structured data = easy to use in email template
-    "company_summary" → email intro mein
-    "ai_hook"         → personalization angle
-    "tech_stack"      → resume match karne ke liye
-    """
     prompt = f"""
 You are researching a company for personalized cold email outreach.
 
 Company: {company_name}
+Known Description: {base_desc[:300]}
 
 Website Content:
 {website_text[:1500]}
@@ -174,21 +140,21 @@ Recent News/Search Results:
 
 Return ONLY a JSON object, no explanation, no markdown:
 {{
-    "company_summary": "2-3 line summary of what they build",
-    "ai_related": true or false,
-    "tech_stack": ["tech1", "tech2"],
-    "recent_highlight": "most interesting recent thing they did",
-    "ai_hook": "specific angle to mention in cold email about their AI work",
-    "company_stage": "early/growth/scale",
-    "target_customer": "who they sell to"
+    "company_summary"  : "2-3 line summary of what they build",
+    "ai_related"       : true or false,
+    "tech_stack"       : ["tech1", "tech2"],
+    "recent_highlight" : "most interesting recent thing they did",
+    "ai_hook"          : "specific angle to mention in cold email about their AI work",
+    "company_stage"    : "early/growth/scale",
+    "target_customer"  : "who they sell to"
 }}
 """
     try:
         response = client.chat.completions.create(
-            model      = LLM_MODEL,
-            messages   = [{"role": "user", "content": prompt}],
-            max_tokens = 400,
-            temperature= 0.1
+            model       = LLM_MODEL,
+            messages    = [{"role": "user", "content": prompt}],
+            max_tokens  = 400,
+            temperature = 0.1
         )
         raw = response.choices[0].message.content.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
@@ -197,90 +163,60 @@ Return ONLY a JSON object, no explanation, no markdown:
     except Exception as e:
         logger.error(f"Groq summarize error: {e}")
         return {
-            "company_summary" : "Could not research",
+            "company_summary" : base_desc or "Could not research",
             "ai_related"      : False,
             "tech_stack"      : [],
             "recent_highlight": "",
             "ai_hook"         : "",
             "company_stage"   : "unknown",
-            "target_customer" : "unknown"
+            "target_customer" : "unknown",
         }
 
 
 # ─────────────────────────────────────────────
-# MAIN — Research One Company
+# MAIN — Stateless Research
 # ─────────────────────────────────────────────
 
-def research_company(db: Session, company_id: int) -> dict:
+def research_company(
+    company_name: str,
+    website     : str,
+    description : str = ""
+) -> dict:
     """
-    Ek company research karo.
-    DB mein update karo.
+    Ek company research karo — DB-free.
+    Returns research dict directly.
+
+    Called by:
+    - research_companies_node (pipeline, after company selection)
+    - feed_agent (scheduler, for global feed enrichment)
     """
-    company = db.query(Company).filter(
-        Company.id == company_id
-    ).first()
-
-    if not company:
-        return {"error": "Company nahi mili"}
-
-    if company.research_done:
-        return {"message": "Already researched", "id": company_id}
-
-    logger.info(f"🔍 Researching: {company.name}")
+    logger.info(f"🔍 Researching: {company_name}")
 
     # Step 1 — Website
-    website_text = scrape_website(company.website or "")
+    website_text = scrape_website(website)
 
     # Step 2 — News (Tavily first, DDG fallback)
-    search_text = search_tavily(company.name)
+    search_text = search_tavily(company_name)
     if not search_text:
-        search_text = search_duckduckgo(company.name)
+        search_text = search_duckduckgo(company_name)
 
     # Step 3 — Groq summary
     summary = summarize_with_groq(
-        company.name,
+        company_name,
         website_text,
-        search_text
+        search_text,
+        base_desc=description
     )
 
-    # DB update karo
-    company.company_summary = summary.get("company_summary")
-    company.recent_news     = summary.get("recent_highlight")
-    company.ai_related      = summary.get("ai_related", False)
-    company.tech_stack      = json.dumps(summary.get("tech_stack", []))
-    company.research_done   = True
-
-    db.commit()
-
-    logger.info(f"  ✅ {company.name} — research done")
+    logger.info(f"  ✅ {company_name} — research done")
 
     return {
-        "company_id"      : company_id,
-        "name"            : company.name,
-        "summary"         : summary.get("company_summary"),
-        "ai_related"      : summary.get("ai_related"),
-        "recent_highlight": summary.get("recent_highlight"),
-        "ai_hook"         : summary.get("ai_hook"),
-        "tech_stack"      : summary.get("tech_stack"),
+        "company_name"    : company_name,
+        "company_summary" : summary.get("company_summary"),
+        "ai_related"      : summary.get("ai_related",       False),
+        "tech_stack"      : summary.get("tech_stack",       []),
+        "recent_highlight": summary.get("recent_highlight", ""),
+        "ai_hook"         : summary.get("ai_hook",          ""),
+        "company_stage"   : summary.get("company_stage",    "unknown"),
+        "target_customer" : summary.get("target_customer",  "unknown"),
     }
-
-
-def research_all_pending(db: Session) -> dict:
-    """Sab unresearched companies research karo."""
-    companies = db.query(Company).filter(
-        Company.research_done == False
-    ).all()
-
-    if not companies:
-        return {"message": "Sab companies researched hain", "done": 0}
-
-    done = 0
-    for company in companies:
-        try:
-            research_company(db, company.id)
-            done += 1
-        except Exception as e:
-            logger.error(f"Research failed {company.name}: {e}")
-            continue
-
-    return {"researched": done}
