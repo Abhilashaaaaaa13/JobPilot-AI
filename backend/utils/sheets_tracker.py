@@ -1,13 +1,13 @@
 # backend/utils/sheets_tracker.py
+# Google Sheets mein cold outreach track karo
+# Job Applications tab removed — Track A dropped
 
 import os
-import re
 from datetime import datetime
 from loguru   import logger
 from dotenv   import load_dotenv
 load_dotenv()
 
-# ── Top-level import so gspread.exceptions is accessible everywhere ──────────
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -16,12 +16,10 @@ except ImportError:
     GSPREAD_AVAILABLE = False
     logger.warning("gspread not installed — Sheets tracking disabled")
 
-SHEETS_ID             = os.getenv("GOOGLE_SHEETS_ID",            "")
-SERVICE_ACCOUNT_FILE  = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "credentials.json")
+SHEETS_ID            = os.getenv("GOOGLE_SHEETS_ID",            "")
+SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "credentials.json")
 
-# Sheet tab names
 TAB_COLD_OUTREACH = "Cold Outreach"
-TAB_JOB_APPS      = "Job Applications"
 TAB_FOLLOWUPS     = "Follow Ups"
 
 
@@ -30,10 +28,6 @@ TAB_FOLLOWUPS     = "Follow Ups"
 # ─────────────────────────────────────────────
 
 def get_sheets_client():
-    """
-    Google Sheets client banao.
-    Service account credentials use karo.
-    """
     if not GSPREAD_AVAILABLE:
         logger.error("gspread library not available")
         return None
@@ -47,8 +41,7 @@ def get_sheets_client():
             SERVICE_ACCOUNT_FILE,
             scopes=scopes
         )
-        client = gspread.authorize(creds)
-        return client
+        return gspread.authorize(creds)
 
     except Exception as e:
         logger.error(f"Sheets client error: {e}", exc_info=True)
@@ -60,20 +53,12 @@ def get_sheets_client():
 # ─────────────────────────────────────────────
 
 def get_or_create_sheet(client, tab_name: str):
-    """
-    Tab dhundho ya banao.
-
-    FIX 1: gspread.exceptions.WorksheetNotFound explicitly catch karo
-            taaki inner exception outer ke saath mix na ho.
-    FIX 2: exc_info=True — full traceback log mein aaye.
-    """
     try:
         spreadsheet = client.open_by_key(SHEETS_ID)
 
         try:
-            worksheet = spreadsheet.worksheet(tab_name)
+            return spreadsheet.worksheet(tab_name)
         except gspread.exceptions.WorksheetNotFound:
-            # Tab exist nahi karta — naya banao
             worksheet = spreadsheet.add_worksheet(
                 title=tab_name,
                 rows=1000,
@@ -83,12 +68,9 @@ def get_or_create_sheet(client, tab_name: str):
             if headers:
                 worksheet.append_row(headers)
             logger.info(f"  📋 Created new sheet tab: {tab_name}")
-
-        return worksheet
+            return worksheet
 
     except Exception as e:
-        # exc_info=True ensures full traceback is captured — previously `e`
-        # was serialising as an empty string for certain gspread API errors.
         logger.error(f"Sheet get/create error: {e}", exc_info=True)
         return None
 
@@ -98,7 +80,6 @@ def get_or_create_sheet(client, tab_name: str):
 # ─────────────────────────────────────────────
 
 def _get_headers(tab_name: str) -> list:
-    """Har tab ke liye headers."""
     if tab_name == TAB_COLD_OUTREACH:
         return [
             "Date Sent",
@@ -115,20 +96,6 @@ def _get_headers(tab_name: str) -> list:
             "Reply Preview",
             "Follow Up 1",
             "Follow Up 2",
-            "Notes"
-        ]
-    elif tab_name == TAB_JOB_APPS:
-        return [
-            "Date Applied",
-            "Company",
-            "Role",
-            "Platform",
-            "Apply URL",
-            "Contact Email",
-            "Subject",
-            "Status",
-            "Reply Date",
-            "Follow Up 1",
             "Notes"
         ]
     elif tab_name == TAB_FOLLOWUPS:
@@ -159,7 +126,6 @@ def log_cold_email(
     gap          : str,
     proposal     : str
 ) -> bool:
-    """Cold email bhejne ke baad Sheet mein log karo."""
     if not SHEETS_ID:
         logger.warning("GOOGLE_SHEETS_ID missing — skip")
         return False
@@ -173,7 +139,7 @@ def log_cold_email(
         if not ws:
             return False
 
-        row = [
+        ws.append_row([
             datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
             company,
             website,
@@ -184,69 +150,18 @@ def log_cold_email(
             gap[:100]      if gap      else "",
             proposal[:100] if proposal else "",
             "Sent",
-            "",   # Reply Date
-            "",   # Reply Preview
-            "",   # Follow Up 1
-            "",   # Follow Up 2
-            ""    # Notes
-        ]
+            "",  # Reply Date
+            "",  # Reply Preview
+            "",  # Follow Up 1
+            "",  # Follow Up 2
+            ""   # Notes
+        ])
 
-        ws.append_row(row)
         logger.info(f"  📊 Sheet updated: {company} cold email")
         return True
 
     except Exception as e:
         logger.error(f"Sheet log cold email error: {e}", exc_info=True)
-        return False
-
-
-# ─────────────────────────────────────────────
-# LOG JOB APPLICATION
-# ─────────────────────────────────────────────
-
-def log_job_application(
-    user_id      : int,
-    company      : str,
-    role         : str,
-    platform     : str,
-    apply_url    : str,
-    contact_email: str,
-    subject      : str
-) -> bool:
-    """Job application ke baad Sheet mein log karo."""
-    if not SHEETS_ID:
-        logger.warning("GOOGLE_SHEETS_ID missing — skip")
-        return False
-
-    client = get_sheets_client()
-    if not client:
-        return False
-
-    try:
-        ws = get_or_create_sheet(client, TAB_JOB_APPS)
-        if not ws:
-            return False
-
-        row = [
-            datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
-            company,
-            role,
-            platform,
-            apply_url,
-            contact_email,
-            subject,
-            "Applied",
-            "",   # Reply Date
-            "",   # Follow Up 1
-            ""    # Notes
-        ]
-
-        ws.append_row(row)
-        logger.info(f"  📊 Sheet updated: {company} job app")
-        return True
-
-    except Exception as e:
-        logger.error(f"Sheet log job app error: {e}", exc_info=True)
         return False
 
 
@@ -260,10 +175,6 @@ def update_reply_status(
     reply_body   : str,
     tab_name     : str = TAB_COLD_OUTREACH
 ) -> bool:
-    """
-    Reply aaya → Sheet mein status update karo.
-    Email column match karke row dhundho.
-    """
     if not SHEETS_ID:
         return False
 
@@ -316,7 +227,9 @@ def update_reply_status(
                             reply_prev_col + 1,
                             reply_body[:100] if reply_body else ""
                         )
-                    logger.info(f"  📊 Sheet updated: reply from {contact_email}")
+                    logger.info(
+                        f"  📊 Sheet updated: reply from {contact_email}"
+                    )
                     return True
 
         return False
@@ -339,13 +252,6 @@ def log_followup(
     new_value       : str,
     tab_name        : str = TAB_COLD_OUTREACH
 ) -> bool:
-    """
-    Follow up bhejne ke baad Sheet update karo.
-    1. Followups tab mein naya row add karo
-    2. Original row mein Follow Up column update karo
-
-    FIX 3: ws null-check add kiya before calling get_all_values()
-    """
     if not SHEETS_ID:
         return False
 
@@ -354,7 +260,7 @@ def log_followup(
         return False
 
     try:
-        # 1. Followups tab mein log karo
+        # 1 — Followups tab mein log karo
         fu_ws = get_or_create_sheet(client, TAB_FOLLOWUPS)
         if fu_ws:
             fu_ws.append_row([
@@ -367,14 +273,13 @@ def log_followup(
                 "Sent"
             ])
 
-        # 2. Original row update karo
+        # 2 — Original row update karo
         ws = get_or_create_sheet(client, tab_name)
-
-        # ── FIX: guard against None before calling get_all_values() ─────────
         if not ws:
-            logger.warning(f"Could not open tab '{tab_name}' — skipping row update")
+            logger.warning(
+                f"Could not open tab '{tab_name}' — skipping row update"
+            )
             return True
-        # ────────────────────────────────────────────────────────────────────
 
         rows = ws.get_all_values()
         if not rows:
@@ -414,9 +319,13 @@ def log_followup(
                                 ws.update_cell(row_idx, fu2_col + 1, now_str)
 
                     if status_col is not None:
-                        ws.update_cell(row_idx, status_col + 1, "Follow Up Sent")
+                        ws.update_cell(
+                            row_idx, status_col + 1, "Follow Up Sent"
+                        )
 
-                    logger.info(f"  📊 Sheet updated: followup {contact_email}")
+                    logger.info(
+                        f"  📊 Sheet updated: followup {contact_email}"
+                    )
                     break
 
         return True
@@ -446,15 +355,15 @@ def sync_sent_log_to_sheet(user_id: int) -> dict:
                 continue
 
             log_cold_email(
-                user_id      =user_id,
-                company      =company,
-                website      ="",
-                contact_name =entry.get("contact", ""),
-                contact_role ="",
-                contact_email=entry["to"],
-                subject      =entry.get("subject", ""),
-                gap          ="",
-                proposal     =""
+                user_id       = user_id,
+                company       = company,
+                website       = "",
+                contact_name  = entry.get("contact", ""),
+                contact_role  = "",
+                contact_email = entry["to"],
+                subject       = entry.get("subject", ""),
+                gap           = "",
+                proposal      = ""
             )
             synced += 1
 
