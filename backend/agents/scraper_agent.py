@@ -1,4 +1,8 @@
 # backend/agents/scraper_agent.py
+#
+# Sources: YC API + Betalist
+# HN "Who is Hiring" removed — job postings thread hai, company directory nahi.
+# Parsed data unreliable tha (role names as company names, no proper descriptions).
 
 import asyncio
 import sys
@@ -6,18 +10,17 @@ import time
 import random
 import re
 import requests as req
-from bs4                          import BeautifulSoup
-from playwright.async_api         import async_playwright
-from loguru                       import logger
-from concurrent.futures           import ThreadPoolExecutor, as_completed
-from typing                       import Generator
+from bs4                      import BeautifulSoup
+from playwright.async_api     import async_playwright
+from loguru                   import logger
+from concurrent.futures       import ThreadPoolExecutor, as_completed
+from typing                   import Generator
 
 import os
 from dotenv import load_dotenv
 load_dotenv()
 
-PRODUCT_HUNT_TOKEN = os.getenv("PRODUCT_HUNT_TOKEN", "")
-APOLLO_API_KEY     = os.getenv("APOLLO_API_KEY", "")
+APOLLO_API_KEY = os.getenv("APOLLO_API_KEY", "")
 
 EMAIL_RE = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
 HEADERS  = {
@@ -56,8 +59,6 @@ def is_relevant(title: str, desc: str, roles: list) -> bool:
 
 # ═════════════════════════════════════════════
 # EMAIL FINDING
-# — SMTP verify removed (slow + mostly blocked)
-# — Order: website scrape → Apollo → pattern fallback
 # ═════════════════════════════════════════════
 
 def find_emails_on_website(website: str) -> list:
@@ -85,21 +86,16 @@ def find_emails_on_website(website: str) -> list:
                                  .strip()
                                  .split("?")[0]
                     )
-                    if "@" in email and not any(
-                        s in email.lower() for s in SKIP
-                    ):
+                    if "@" in email and not any(s in email.lower() for s in SKIP):
                         found.append({"email": email, "verified": True})
 
             for email in re.findall(EMAIL_RE, res.text):
-                if domain in email and not any(
-                    s in email.lower() for s in SKIP
-                ):
+                if domain in email and not any(s in email.lower() for s in SKIP):
                     found.append({"email": email, "verified": True})
 
         except Exception:
             continue
 
-    # Deduplicate
     seen, unique = set(), []
     for f in found:
         if f["email"] not in seen:
@@ -109,23 +105,18 @@ def find_emails_on_website(website: str) -> list:
 
 
 def _apollo_lookup(first: str, last: str, domain: str) -> dict | None:
-    """Apollo API se email dhundho — free tier: 50 credits/month."""
     if not APOLLO_API_KEY:
         return None
     try:
         res = req.post(
             "https://api.apollo.io/v1/people/match",
-            json={
-                "first_name": first,
-                "last_name" : last,
-                "domain"    : domain
-            },
+            json={"first_name": first, "last_name": last, "domain": domain},
             headers={
                 "Content-Type" : "application/json",
                 "Cache-Control": "no-cache",
-                "X-Api-Key"    : APOLLO_API_KEY
+                "X-Api-Key"    : APOLLO_API_KEY,
             },
-            timeout=8
+            timeout=8,
         )
         email = res.json().get("person", {}).get("email")
         if email:
@@ -136,15 +127,7 @@ def _apollo_lookup(first: str, last: str, domain: str) -> dict | None:
 
 
 def find_best_email(name: str, domain: str) -> dict:
-    """
-    Priority:
-    1. Website scrape (mailto links + regex)
-    2. Apollo API (if key available)
-    3. Pattern fallback — first@domain (verified=False, fast)
-
-    SMTP verify deliberately removed — too slow & mostly blocked.
-    """
-    # 1 — Website
+    """Priority: website scrape → Apollo API → pattern fallback"""
     site = find_emails_on_website(f"https://{domain}")
     if site:
         return {**site[0], "source": "website"}
@@ -153,28 +136,22 @@ def find_best_email(name: str, domain: str) -> dict:
         return {"email": None, "verified": False, "source": "none"}
 
     parts = name.lower().strip().split()
-    first = parts[0]            if parts           else ""
-    last  = parts[-1]           if len(parts) > 1  else ""
+    first = parts[0]           if parts          else ""
+    last  = parts[-1]          if len(parts) > 1 else ""
 
     if not first:
         return {"email": None, "verified": False, "source": "none"}
 
-    # 2 — Apollo
     apollo = _apollo_lookup(first, last, domain)
     if apollo:
         return apollo
 
-    # 3 — Pattern fallback (no SMTP verify — just generate)
-    if last and last != first:
-        email = f"{first}.{last}@{domain}"
-    else:
-        email = f"{first}@{domain}"
-
+    email = f"{first}.{last}@{domain}" if (last and last != first) else f"{first}@{domain}"
     return {"email": email, "verified": False, "source": "pattern"}
 
 
 # ═════════════════════════════════════════════
-# TRACK B — STREAMING GENERATORS
+# SOURCE 1 — YC API
 # ═════════════════════════════════════════════
 
 def get_yc_founders(slug: str) -> list:
@@ -188,10 +165,7 @@ def get_yc_founders(slug: str) -> list:
             return []
         section = text.split("Active Founders")[1]
         names   = list(dict.fromkeys(
-            re.findall(
-                r'([A-Z][a-z]+ [A-Z][a-z]+)\s+Founder',
-                section
-            )
+            re.findall(r'([A-Z][a-z]+ [A-Z][a-z]+)\s+Founder', section)
         ))
         return [{"name": n, "role": "Founder"} for n in names[:4]]
     except Exception:
@@ -201,15 +175,14 @@ def get_yc_founders(slug: str) -> list:
 def stream_yc_companies(prefs: dict) -> Generator:
     try:
         res  = req.get(
-            "https://api.ycombinator.com/v0.1/companies"
-            "?page=1&per_page=100",
-            timeout=15
+            "https://api.ycombinator.com/v0.1/companies?page=1&per_page=100",
+            timeout=15,
         )
         data = res.json().get("companies", [])
 
         ai_tags = [
             "artificial intelligence", "machine learning",
-            "developer tools", "saas", "nlp", "llm", "b2b"
+            "developer tools", "saas", "nlp", "llm", "b2b",
         ]
 
         for c in data:
@@ -228,9 +201,7 @@ def stream_yc_companies(prefs: dict) -> Generator:
                 continue
 
             ai_related = any(t in tags for t in ai_tags)
-            relevant   = is_relevant(
-                one_liner, tags, prefs.get("target_roles", [])
-            )
+            relevant   = is_relevant(one_liner, tags, prefs.get("target_roles", []))
 
             if not ai_related and not relevant:
                 continue
@@ -265,76 +236,15 @@ def stream_yc_companies(prefs: dict) -> Generator:
         logger.error(f"YC Companies error: {e}")
 
 
-def stream_hn_hiring(prefs: dict) -> Generator:
-    try:
-        hits = req.get(
-            "https://hn.algolia.com/api/v1/search"
-            "?query=who+is+hiring&tags=story&hitsPerPage=1",
-            timeout=10
-        ).json().get("hits", [])
-
-        if not hits:
-            return
-
-        thread_id = hits[0]["objectID"]
-        comments  = req.get(
-            f"https://hn.algolia.com/api/v1/search"
-            f"?tags=comment,story_{thread_id}&hitsPerPage=100",
-            timeout=10
-        ).json().get("hits", [])
-
-        for comment in comments:
-            text = BeautifulSoup(
-                comment.get("comment_text", ""), "html.parser"
-            ).get_text()
-
-            if not text or len(text) < 30:
-                continue
-
-            if not is_relevant(text, "", prefs.get("target_roles", [])):
-                continue
-
-            emails = [
-                e for e in re.findall(EMAIL_RE, text)
-                if not any(s in e.lower() for s in SKIP)
-            ]
-            if not emails:
-                continue
-
-            lines  = [l.strip() for l in text.split("\n") if l.strip()]
-            name   = lines[0][:80] if lines else "HN Company"
-            obj_id = comment.get("objectID", "")
-            desc   = " ".join(lines[:6])[:500]
-
-            yield {
-                "name"       : name,
-                "website"    : f"https://news.ycombinator.com/item?id={obj_id}",
-                "one_liner"  : lines[0][:100] if lines else "",
-                "description": desc,
-                "funding"    : "Unknown",
-                "team_size"  : "Unknown",
-                "location"   : "Remote",
-                "source"     : "hn_hiring",
-                "contacts"   : [
-                    {
-                        "name"    : "Hiring Contact",
-                        "role"    : "Founder/HR",
-                        "email"   : e,
-                        "verified": True,
-                    }
-                    for e in emails[:2]
-                ],
-            }
-
-    except Exception as e:
-        logger.error(f"HN error: {e}")
-
+# ═════════════════════════════════════════════
+# SOURCE 2 — BETALIST
+# ═════════════════════════════════════════════
 
 async def _scrape_betalist_async(prefs: dict) -> list:
     results      = []
     skip_domains = [
         "betalist", "startup.jobs", "aijobs",
-        "web3.career", "vision.directory"
+        "web3.career", "vision.directory",
     ]
 
     async with async_playwright() as p:
@@ -361,10 +271,7 @@ async def _scrape_betalist_async(prefs: dict) -> list:
                         continue
 
                     sp = await browser.new_page()
-                    await sp.goto(
-                        f"https://betalist.com{href}",
-                        timeout=15000
-                    )
+                    await sp.goto(f"https://betalist.com{href}", timeout=15000)
                     await sp.wait_for_timeout(1000)
 
                     full_desc = desc
@@ -381,11 +288,7 @@ async def _scrape_betalist_async(prefs: dict) -> list:
                     website   = None
                     for a in all_links:
                         h = await a.get_attribute("href")
-                        if (
-                            h
-                            and h.startswith("http")
-                            and not any(d in h for d in skip_domains)
-                        ):
+                        if h and h.startswith("http") and not any(d in h for d in skip_domains):
                             website = h
                             break
 
@@ -393,11 +296,7 @@ async def _scrape_betalist_async(prefs: dict) -> list:
 
                     if not website:
                         clean   = name.lower().replace(" ", "").strip()
-                        website = (
-                            f"https://{clean}"
-                            if "." in clean
-                            else f"https://{clean}.com"
-                        )
+                        website = f"https://{clean}" if "." in clean else f"https://{clean}.com"
 
                     site_emails = find_emails_on_website(website)
                     contacts    = [
@@ -437,11 +336,8 @@ async def _scrape_betalist_async(prefs: dict) -> list:
 
 
 def _run_betalist(prefs: dict) -> list:
-    """Betalist async → sync wrapper for ThreadPoolExecutor."""
     if sys.platform == "win32":
-        asyncio.set_event_loop_policy(
-            asyncio.WindowsProactorEventLoopPolicy()
-        )
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -453,37 +349,35 @@ def _run_betalist(prefs: dict) -> list:
         loop.close()
 
 
+def stream_betalist(prefs: dict) -> Generator:
+    yield from _run_betalist(prefs)
+
+
+# ═════════════════════════════════════════════
+# RUNNER WRAPPERS
+# ═════════════════════════════════════════════
+
 def _run_yc(prefs: dict) -> list:
     return list(stream_yc_companies(prefs))
 
 
-def _run_hn(prefs: dict) -> list:
-    return list(stream_hn_hiring(prefs))
-
-
 # ═════════════════════════════════════════════
-# PARALLEL SCRAPING — Track B only
+# PARALLEL SCRAPING
 # ═════════════════════════════════════════════
 
 def scrape_track_b(prefs: dict) -> list:
     """
-    YC + HN + Betalist parallel chalao.
-    ThreadPoolExecutor — Betalist (Playwright) slow hota hai,
-    parallel se overall time kam hoga.
+    YC + Betalist parallel chalao.
+    HN removed — "Who is Hiring" thread job postings hai, company directory nahi.
+    Parsed data unreliable tha (role names as company names, no descriptions).
     """
     companies = []
-
-    scrapers = [
+    scrapers  = [
         ("yc",       _run_yc,       prefs),
-        ("hn",       _run_hn,       prefs),
         ("betalist", _run_betalist, prefs),
     ]
-
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {
-            executor.submit(fn, p): name
-            for name, fn, p in scrapers
-        }
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {executor.submit(fn, p): name for name, fn, p in scrapers}
         for future in as_completed(futures):
             source = futures[future]
             try:
@@ -492,27 +386,16 @@ def scrape_track_b(prefs: dict) -> list:
                 logger.info(f"  ✅ {source}: {len(result)} companies")
             except Exception as e:
                 logger.error(f"  ❌ {source} failed: {e}")
-
     return companies
 
 
 def run(user_id: int, prefs: dict) -> dict:
-    """
-    Track B scraping — parallel, returns companies only.
-    Track A removed.
-    """
     logger.info(f"🚀 Scraper starting — user {user_id}")
     logger.info(f"   Domains: {prefs.get('domains')}")
     logger.info(f"   Roles  : {prefs.get('target_roles')}")
-
     track_b = scrape_track_b(prefs)
-
     logger.info(f"   Total  : {len(track_b)} companies")
-
-    return {
-        "track_b"         : track_b,
-        "total_companies" : len(track_b),
-    }
+    return {"track_b": track_b, "total_companies": len(track_b)}
 
 
 # ─────────────────────────────────────────────
@@ -522,7 +405,7 @@ if __name__ == "__main__":
     prefs = {
         "domains"     : ["ai_ml", "data_science"],
         "target_roles": ["ai engineer", "ml engineer", "data scientist"],
-        "location"    : "remote"
+        "location"    : "remote",
     }
     result = run(user_id=1, prefs=prefs)
     logger.info(f"Companies: {result['total_companies']}")
