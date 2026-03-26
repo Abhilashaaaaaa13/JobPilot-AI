@@ -23,9 +23,7 @@ class Job(Base):
     description  = Column(Text)
     apply_url    = Column(String(500), unique=True)
 
-    # Source
-    source       = Column(String(100))    # "internshala" / "wellfound"
-                                          # "unstop" / "yc_jobs"
+   
 
     # Scoring — scoring agent bharega
     fit_score    = Column(Integer, default=0)    # 0-100
@@ -37,5 +35,4 @@ class Job(Base):
 
     scraped_date = Column(DateTime, default=datetime.utcnow)
 
-    # Relationship
-    applications = relationship("Application", back_populates="job")
+   

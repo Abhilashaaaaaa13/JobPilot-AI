@@ -31,5 +31,4 @@ class Contact(Base):
 
     #relationship
     company = relationship("Company", back_populates="contacts")
-    applications = relationship("Application", back_populates="contact")
-
+    
