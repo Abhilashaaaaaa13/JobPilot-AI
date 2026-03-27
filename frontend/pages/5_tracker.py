@@ -54,6 +54,40 @@ with st.sidebar:
 st.markdown("# 📊 Tracker")
 st.caption("Sent emails, replies, follow ups — sab ek jagah")
 
+# ── Scheduler Status Banner ───────────────────
+sched = st.session_state.get("scheduler")
+if sched and sched.running:
+    jobs        = {j.id: j for j in sched.get_jobs()}
+    reply_job   = jobs.get("reply_check")
+    followup_job= jobs.get("followup_check")
+
+    parts = []
+    if reply_job and reply_job.next_run_time:
+        parts.append(f"Reply check: **{reply_job.next_run_time.strftime('%H:%M')}**")
+    if followup_job and followup_job.next_run_time:
+        parts.append(f"Follow up: **{followup_job.next_run_time.strftime('%H:%M')}**")
+
+    status_line = "  ·  ".join(parts) if parts else "Jobs chal rahe hain"
+    st.markdown(
+        f'<div style="background:rgba(74,222,128,.07);border:1px solid rgba(74,222,128,.2);'
+        f'border-radius:6px;padding:8px 14px;font-size:12px;font-family:\'Space Mono\',monospace;'
+        f'color:#4ade80;margin-bottom:12px">'
+        f'🟢 Scheduler ON  ·  Next auto-run →  {status_line}'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+else:
+    err = st.session_state.get("scheduler_error", "")
+    st.markdown(
+        f'<div style="background:rgba(248,113,113,.07);border:1px solid rgba(248,113,113,.2);'
+        f'border-radius:6px;padding:8px 14px;font-size:12px;font-family:\'Space Mono\',monospace;'
+        f'color:#f87171;margin-bottom:12px">'
+        f'🔴 Scheduler OFF — auto reply/followup nahi chalega.  '
+        f'{"Error: " + err[:80] if err else "App restart karo."}'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
 log_file = f"uploads/{user_id}/sent_emails/log.json"
 
 if not os.path.exists(log_file):
@@ -94,9 +128,15 @@ c5.metric("Reply Rate",  reply_pct)
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ── Manual Action Buttons ─────────────────────
+st.caption("⬇️ Manual triggers — scheduler khud karta hai, yeh sirf abhi force karne ke liye hain")
 a1, a2 = st.columns(2)
 with a1:
-    if st.button("🔄 Check Replies Now", use_container_width=True, type="primary"):
+    if st.button(
+        "🔄 Check Replies Now",
+        use_container_width=True,
+        type="primary",
+        help="Scheduler har 6 ghante inbox check karta hai — yeh abhi manually trigger karta hai"
+    ):
         with st.spinner("Inbox check kar rahe hain..."):
             try:
                 from backend.agents.reply_detector import check_inbox
@@ -114,7 +154,11 @@ with a1:
                 st.error(f"Error: {e}")
 
 with a2:
-    if st.button("📤 Send Follow Ups Now", use_container_width=True):
+    if st.button(
+        "📤 Force Send Follow Ups",
+        use_container_width=True,
+        help="Scheduler har 12 ghante followup bhejta hai — yeh abhi manually trigger karta hai"
+    ):
         with st.spinner("Follow ups bhej rahe hain..."):
             try:
                 from backend.agents.followup_agent import check_and_send_followups
@@ -144,7 +188,6 @@ with f1:
         key="tracker_filter"
     )
 
-# Sort — latest first
 sorted_log = sorted(sent_log, key=lambda x: x.get("sent_at",""), reverse=True)
 
 if filter_status != "all":
