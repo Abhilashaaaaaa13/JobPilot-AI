@@ -10,6 +10,18 @@ from backend.database import init_db
 
 init_db()
 
+# ── Scheduler startup ─────────────────────────
+if "scheduler" not in st.session_state:
+    try:
+        from backend.pipeline.scheduler import create_scheduler
+        _scheduler = create_scheduler()
+        _scheduler.start()
+        st.session_state["scheduler"] = _scheduler
+    except Exception as e:
+        st.session_state["scheduler"] = None
+        st.session_state["scheduler_error"] = str(e)
+# ─────────────────────────────────────────────
+
 st.set_page_config(
     page_title="OutreachAI",
     page_icon="⚡",
@@ -116,7 +128,6 @@ if "user_id" not in st.session_state:
         st.session_state["user_id"] = saved["user_id"]
         st.session_state["email"]   = saved["email"]
 
-
 # ─────────────────────────────────────────────
 # AUTH GATE
 # ─────────────────────────────────────────────
@@ -199,9 +210,45 @@ with st.sidebar:
         except Exception:
             pass
 
+    # ── Scheduler status — sidebar mein ──────
+    st.divider()
+    sched = st.session_state.get("scheduler")
+    if sched and sched.running:
+        st.markdown(
+            '<p style="color:#4ade80;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">'
+            '🟢 AUTO-CHECK ON</p>',
+            unsafe_allow_html=True
+        )
+        jobs = sched.get_jobs()
+        for job in jobs:
+            if job.next_run_time:
+                label = {"reply_check": "Replies", "followup_check": "Follow ups", "company_feed_refresh": "Feed"}.get(job.id, job.id)
+                next_t = job.next_run_time.strftime("%H:%M")
+                st.markdown(
+                    f'<p style="color:#555;font-size:10px;font-family:\'Space Mono\',monospace;margin:2px 0">'
+                    f'· {label}: {next_t}</p>',
+                    unsafe_allow_html=True
+                )
+    else:
+        err = st.session_state.get("scheduler_error", "")
+        st.markdown(
+            '<p style="color:#f87171;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">'
+            '🔴 SCHEDULER OFF</p>',
+            unsafe_allow_html=True
+        )
+        if err:
+            st.caption(f"Error: {err[:60]}")
+
     st.divider()
     if st.button("Logout", key="logout_btn", use_container_width=True):
         _remember_me_clear()
+        # Scheduler band karo logout pe
+        sched = st.session_state.get("scheduler")
+        if sched and sched.running:
+            try:
+                sched.shutdown(wait=False)
+            except Exception:
+                pass
         for k in list(st.session_state.keys()):
             del st.session_state[k]
         st.rerun()
@@ -335,7 +382,6 @@ with right:
         except Exception:
             pass
 
-    # Already-contacted sets
     contacted_names   = set()
     contacted_domains = set()
     for entry in sent_log:
@@ -386,7 +432,6 @@ with right:
             src      = source_label.get(company.get("source", ""), "")
             contacts = company.get("contacts", [])
 
-            # Best email
             best_email        = None
             best_contact_name = None
             for c in contacts:
@@ -428,22 +473,16 @@ with right:
                     else:
                         st.caption("No email found")
 
-                # ── Outreach button ───────────────
                 if st.button(
                     "✉️ Outreach Karo",
                     key  = f"feed_outreach_{idx}",
                     use_container_width = True,
                     type = "primary",
                 ):
-                    # 1. DB mein save karo
                     from backend.utils.feed_to_db import save_feed_company_to_db
                     _, co_id = save_feed_company_to_db(user_id, company)
-
-                    # 2. Session state mein pass karo outreach page ke liye
                     st.session_state["feed_outreach_company"] = company
                     st.session_state["feed_outreach_co_id"]   = co_id
-
-                    # 3. Outreach page pe redirect
                     st.switch_page("pages/4_outreach.py")
 
     st.markdown("<br>", unsafe_allow_html=True)
