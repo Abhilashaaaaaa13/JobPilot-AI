@@ -28,7 +28,7 @@ beautifulsoup4==4.12.3
 playwright==1.44.0
 lxml==5.2.1
 
-# ── LLM ───────────────────────────────────────
+# ── LLM 
 groq==0.9.0
 langchain==0.2.5
 langchain-groq==0.1.6
