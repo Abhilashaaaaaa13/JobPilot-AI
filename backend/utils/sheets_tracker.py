@@ -3,6 +3,7 @@
 # Job Applications tab removed — Track A dropped
 
 import os
+import json
 from datetime import datetime
 from loguru   import logger
 from dotenv   import load_dotenv
@@ -341,9 +342,20 @@ def log_followup(
 
 def sync_sent_log_to_sheet(user_id: int) -> dict:
     """Pura sent log Sheet se sync karo."""
-    from backend.agents.reply_detector import get_sent_log
 
-    log = get_sent_log(user_id)
+    log_file = f"uploads/{user_id}/sent_emails/log.json"
+
+    if not os.path.exists(log_file):
+        logger.warning(f"[Sheets] No sent log found for user {user_id}")
+        return {"synced": 0}
+
+    try:
+        with open(log_file, encoding="utf-8") as f:
+            log = json.load(f)
+    except Exception as e:
+        logger.error(f"[Sheets] Could not read sent log: {e}")
+        return {"synced": 0}
+
     if not log:
         return {"synced": 0}
 
@@ -357,13 +369,13 @@ def sync_sent_log_to_sheet(user_id: int) -> dict:
             log_cold_email(
                 user_id       = user_id,
                 company       = company,
-                website       = "",
+                website       = entry.get("website", ""),
                 contact_name  = entry.get("contact", ""),
                 contact_role  = "",
                 contact_email = entry["to"],
                 subject       = entry.get("subject", ""),
-                gap           = "",
-                proposal      = ""
+                gap           = entry.get("gap", ""),
+                proposal      = entry.get("proposal", ""),
             )
             synced += 1
 

@@ -11,21 +11,34 @@ Company description: {company_description}
 User Skills: {user_skills}
 User's Key Project: {key_project}
 
+Research insights (use these to make email hyper-specific):
+- Recent activity : {recent_highlight}
+- AI angle        : {ai_hook}
+- Tech they use   : {tech_stack}
+
+If recent_highlight is not "N/A", reference it in Line 1-2.
+If ai_hook is not "N/A", use it to frame your proposal angle.
+If tech_stack is not "N/A", mention their actual stack in your solution.
+
 YOUR TASK:
 
 STEP 1 - Identify ONE specific gap in their product
 Look at what they do → what's missing or could be better
-Be specific - not "improve AI" but "no multi-language support"
+Use research insights above — be specific.
+Not "improve AI" but "no multi-language support" or
+"your RAG pipeline likely has no re-ranking layer".
 
 STEP 2 - Propose a concrete solution
 Using candidate's exact skills
 "I can build X using Y in Z weeks"
+If you know their tech stack, match your proposal to it.
 
 STEP 3 - Connect to key project as proof
 "I did something similar — [key project]"
 
 Email structure:
 Line 1-2: Hook — specific observation about their product
+          Use recent_highlight or ai_hook if available.
           "Noticed [product] doesn't have [X] — "
           NOT "I came across your company"
 

@@ -42,6 +42,52 @@ def _days_required(followup_count: int) -> int:
     return FOLLOWUP_2_AFTER_DAYS        # 7
 
 
+def get_all_users_with_sent_emails() -> list:
+    """
+    Scan uploads folder aur sab users nikalo jinke sent_emails logs hain.
+    Returns: List of user_ids with sent email histories.
+    """
+    users = []
+    uploads_dir = "uploads"
+    
+    if not os.path.exists(uploads_dir):
+        logger.warning(f"📁 {uploads_dir} folder nahi mila")
+        return users
+    
+    try:
+        for item in os.listdir(uploads_dir):
+            user_path = os.path.join(uploads_dir, item)
+            
+            # Check agar folder hai aur numeric user_id hai
+            if not os.path.isdir(user_path):
+                continue
+            
+            try:
+                user_id = int(item)
+            except ValueError:
+                # Non-numeric folder, skip
+                continue
+            
+            # Check agar sent_emails/log.json exist karta hai
+            log_file = os.path.join(user_path, "sent_emails", "log.json")
+            if os.path.exists(log_file):
+                try:
+                    with open(log_file, "r") as f:
+                        log_data = json.load(f)
+                        # Only include agar log mein entries hain
+                        if log_data:
+                            users.append(user_id)
+                except Exception as e:
+                    logger.warning(f"Could not read log for user {user_id}: {e}")
+                    continue
+    
+    except Exception as e:
+        logger.error(f"Error scanning uploads directory: {e}")
+    
+    logger.info(f"Found {len(users)} users with sent email logs: {users}")
+    return users
+
+
 def check_and_send_followups(user_id: int) -> dict:
     """
     Reply nahi aaya → follow up bhejo.
@@ -149,7 +195,7 @@ def check_and_send_followups(user_id: int) -> dict:
                     contact_email   = entry["to"],
                     original_subject= entry.get("subject", ""),
                     followup_subject= followup["subject"],
-                    new_value       = followup.get("new_value_added", "")
+                    new_value_added = followup.get("new_value_added", "")
                 )
             except Exception as e:
                 logger.warning(f"Sheets followup log error: {e}")
@@ -170,8 +216,7 @@ def check_and_send_followups(user_id: int) -> dict:
 
 def run_for_all_users() -> dict:
     """Sab users ke liye — scheduler se call hota hai."""
-    from backend.agents.reply_detector import get_all_users_with_sent_emails
-
+    
     users   = get_all_users_with_sent_emails()
     total   = 0
     results = {}

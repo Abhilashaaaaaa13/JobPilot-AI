@@ -31,9 +31,7 @@ class Application(Base):
 
     # Resume
     resume_version   = Column(String(500))
-    ats_score_before = Column(Float)
-    ats_score_after  = Column(Float)
-
+    
     # Email
     email_subject = Column(String(300))
     email_body    = Column(Text)
@@ -57,4 +55,4 @@ class Application(Base):
     # Relationships
     user    = relationship("User",    back_populates="applications")
     company = relationship("Company", back_populates="applications")
-    replies = relationship("Reply",   back_populates="application")
+    # replies = relationship("Reply",   back_populates="application")  # Commented out if Reply model doesn't exist yet

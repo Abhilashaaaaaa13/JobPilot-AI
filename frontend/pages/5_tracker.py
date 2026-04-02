@@ -139,17 +139,47 @@ with a1:
     ):
         with st.spinner("Inbox check kar rahe hain..."):
             try:
-                from backend.agents.reply_detector import check_inbox
-                result = check_inbox(user_id)
+                from backend.pipeline.reply_handler import ReplyDetector, ReplyStorage, AutoDraftGenerator
+
+                detector = ReplyDetector(user_id)
+                result   = detector.check_inbox()
+
                 if result.get("error"):
                     st.error(result["error"])
                 else:
+                    replies = result.get("replies", [])
+                    new_count = 0
+
+                    for reply in replies:
+                        original = reply["original_email"]
+
+                        draft = AutoDraftGenerator.generate_reply_draft(
+                            user_id          = user_id,
+                            incoming_from    = reply["from"],
+                            incoming_subject = reply["subject"],
+                            incoming_body    = reply["body"],
+                            original_subject = original.subject,
+                            original_body    = getattr(original, "body", ""),
+                            company          = original.company,
+                        )
+
+                        saved = ReplyStorage.save_reply_with_draft(
+                            sent_email_id = original.id,
+                            reply_from    = reply["from"],
+                            reply_subject = reply["subject"],
+                            reply_body    = reply["body"],
+                            auto_draft    = draft,
+                        )
+                        if saved:
+                            new_count += 1
+
                     st.success(
-                        f"✅ {result['checked']} emails checked · "
-                        f"{result['replies']} new replies"
+                        f"✅ {len(replies)} replies checked · "
+                        f"{new_count} new replies saved"
                     )
-                    if result["replies"] > 0:
+                    if new_count > 0:
                         st.rerun()
+
             except Exception as e:
                 st.error(f"Error: {e}")
 

@@ -58,7 +58,15 @@ def _sqlite_add_missing_columns():
 
 
 def init_db():
-    from backend.models import user, company, contact, application, reply
-    Base.metadata.create_all(bind=engine)
+    """Initialize database with all models"""
+    # Import all models here to register them with Base
+    from backend.models.user import User, UserProfile
+    from backend.models.company import Company
+    from backend.models.contact import Contact
+    from backend.models.sent_email import SentEmail
+    from backend.models.notification import Notification
+    from backend.models.draft_action import DraftAction
+    from backend.models.application import Application
+    Base.metadata.create_all(bind=engine, checkfirst=True)
     _sqlite_add_missing_columns()
-    logger.info("DB initialised")
+    logger.info("✅ Database initialised")

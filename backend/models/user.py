@@ -27,7 +27,6 @@ class User(Base):
     profile      = relationship("UserProfile", back_populates="user", uselist=False)
     applications = relationship("Application", back_populates="user")
 
-
 class UserProfile(Base):
     __tablename__ = "user_profile"
 
@@ -82,3 +81,4 @@ class UserProfile(Base):
 
     # Relationship
     user = relationship("User", back_populates="profile")
+    
