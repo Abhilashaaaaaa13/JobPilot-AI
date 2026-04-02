@@ -197,6 +197,20 @@ with st.sidebar:
     st.page_link("pages/2_onboarding.py", label="👤  Profile Setup", use_container_width=True)
     st.page_link("pages/4_outreach.py",   label="🚀  Cold Outreach", use_container_width=True)
     st.page_link("pages/5_tracker.py",    label="📊  Tracker",       use_container_width=True)
+
+    # ── Replies badge ─────────────────────────
+    try:
+        from backend.pipeline.reply_handler import NotificationManager
+        _pending = NotificationManager.get_pending_notifications(
+            st.session_state["user_id"]
+        )
+        _reply_count = len([n for n in _pending if n["type"] == "reply_received"])
+        _drafts_label = f"📬  Replies & Drafts  🔴 {_reply_count}" if _reply_count else "📬  Replies & Drafts"
+    except Exception:
+        _reply_count  = 0
+        _drafts_label = "📬  Replies & Drafts"
+
+    st.page_link("pages/3_replies.py", label=_drafts_label, use_container_width=True)
     st.divider()
 
     user_id  = st.session_state["user_id"]
@@ -210,7 +224,7 @@ with st.sidebar:
         except Exception:
             pass
 
-    # ── Scheduler status — sidebar mein ──────
+    # ── Scheduler status ──────────────────────
     st.divider()
     sched = st.session_state.get("scheduler")
     if sched and sched.running:
@@ -222,7 +236,11 @@ with st.sidebar:
         jobs = sched.get_jobs()
         for job in jobs:
             if job.next_run_time:
-                label = {"reply_check": "Replies", "followup_check": "Follow ups", "company_feed_refresh": "Feed"}.get(job.id, job.id)
+                label = {
+                    "reply_check"         : "Replies",
+                    "followup_check"      : "Follow ups",
+                    "company_feed_refresh": "Feed"
+                }.get(job.id, job.id)
                 next_t = job.next_run_time.strftime("%H:%M")
                 st.markdown(
                     f'<p style="color:#555;font-size:10px;font-family:\'Space Mono\',monospace;margin:2px 0">'
@@ -242,7 +260,6 @@ with st.sidebar:
     st.divider()
     if st.button("Logout", key="logout_btn", use_container_width=True):
         _remember_me_clear()
-        # Scheduler band karo logout pe
         sched = st.session_state.get("scheduler")
         if sched and sched.running:
             try:
@@ -316,15 +333,56 @@ left, right = st.columns([1, 1.4], gap="large")
 with left:
     st.markdown("### 🔔 Notifications")
     has_notifs = False
-    now = datetime.utcnow()
+    now        = datetime.utcnow()
 
-    new_replies = [e for e in sent_log if e.get("replied") and e.get("reply_at")]
-    for entry in sorted(new_replies, key=lambda x: x.get("reply_at", ""), reverse=True)[:3]:
-        company  = entry.get("company", entry.get("to", ""))
-        reply_at = entry.get("reply_at", "")[:10]
-        st.success(f"**Reply received** — {company}  ·  {reply_at}")
-        has_notifs = True
+    # ── DB-based reply notifications (reply_handler) ──
+    try:
+        from backend.pipeline.reply_handler import NotificationManager
+        db_notifs     = NotificationManager.get_pending_notifications(user_id)
+        reply_notifs  = [n for n in db_notifs if n["type"] == "reply_received"]
 
+        if reply_notifs:
+            has_notifs = True
+            for notif in reply_notifs[:3]:
+                data    = notif["data"]
+                company = data.get("company") or data.get("from", "")
+                subj    = data.get("subject", "")[:60]
+                col_msg, col_btn = st.columns([3, 1])
+                with col_msg:
+                    st.success(f"**📩 Reply received** — {company}  ·  {subj}")
+                with col_btn:
+                    if st.button("View", key=f"view_notif_{notif['id']}"):
+                        st.switch_page("pages/3_replies.py")
+
+            # Show count if more than 3
+            if len(reply_notifs) > 3:
+                st.caption(f"+ {len(reply_notifs) - 3} more replies — see Replies page")
+
+    except Exception as e:
+        # Fallback: read from JSON log if DB fails
+        new_replies = [e for e in sent_log if e.get("replied") and e.get("reply_at")]
+        for entry in sorted(new_replies, key=lambda x: x.get("reply_at", ""), reverse=True)[:3]:
+            company  = entry.get("company", entry.get("to", ""))
+            reply_at = entry.get("reply_at", "")[:10]
+            st.success(f"**Reply received** — {company}  ·  {reply_at}")
+            has_notifs = True
+
+    # ── Pending draft approvals ───────────────
+    try:
+        from backend.pipeline.reply_handler import DraftApprovalManager
+        pending_drafts = DraftApprovalManager.get_pending_drafts(user_id)
+        if pending_drafts:
+            has_notifs = True
+            st.warning(
+                f"**✏️ {len(pending_drafts)} draft(s) awaiting your approval** — "
+                f"review and send on the Replies page"
+            )
+            if st.button("Review Drafts", key="home_drafts"):
+                st.switch_page("pages/3_replies.py")
+    except Exception:
+        pass
+
+    # ── Follow-up due (from JSON log) ─────────
     due_followups = []
     for entry in sent_log:
         if entry.get("replied") or entry.get("followup_count", 0) >= 2:
@@ -341,6 +399,7 @@ with left:
         if st.button("Send Follow Ups Now", key="home_fu"):
             st.switch_page("pages/5_tracker.py")
 
+    # ── Long awaiting ─────────────────────────
     long_awaiting = []
     for entry in sent_log:
         if not entry.get("replied") and not entry.get("followup_sent"):
@@ -358,8 +417,14 @@ with left:
         st.caption("No notifications yet. Start cold outreach to see activity here.")
 
     st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("Go to Tracker", key="home_tracker", use_container_width=True):
-        st.switch_page("pages/5_tracker.py")
+
+    col_n1, col_n2 = st.columns(2)
+    with col_n1:
+        if st.button("📬 Replies & Drafts", key="home_replies", use_container_width=True):
+            st.switch_page("pages/3_replies.py")
+    with col_n2:
+        if st.button("📊 Go to Tracker", key="home_tracker", use_container_width=True):
+            st.switch_page("pages/5_tracker.py")
 
 
 # ─────────────────────────────────────────────
