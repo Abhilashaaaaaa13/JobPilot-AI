@@ -10,16 +10,11 @@ from backend.database import init_db
 
 init_db()
 
-# ── Scheduler startup ─────────────────────────
+# ── Scheduler — sirf status track karo, start mat karo ───────────────────────
+# Scheduler alag terminal mein chalta hai: `python run_scheduler.py`
+# Yahan sirf session_state mein None set karo taaki sidebar status kaam kare
 if "scheduler" not in st.session_state:
-    try:
-        from backend.pipeline.scheduler import create_scheduler
-        _scheduler = create_scheduler()
-        _scheduler.start()
-        st.session_state["scheduler"] = _scheduler
-    except Exception as e:
-        st.session_state["scheduler"] = None
-        st.session_state["scheduler_error"] = str(e)
+    st.session_state["scheduler"] = None
 # ─────────────────────────────────────────────
 
 st.set_page_config(
@@ -198,12 +193,9 @@ with st.sidebar:
     st.page_link("pages/4_outreach.py",   label="🚀  Cold Outreach", use_container_width=True)
     st.page_link("pages/5_tracker.py",    label="📊  Tracker",       use_container_width=True)
 
-    # ── Replies badge ─────────────────────────
     try:
         from backend.pipeline.reply_handler import NotificationManager
-        _pending = NotificationManager.get_pending_notifications(
-            st.session_state["user_id"]
-        )
+        _pending     = NotificationManager.get_pending_notifications(st.session_state["user_id"])
         _reply_count = len([n for n in _pending if n["type"] == "reply_received"])
         _drafts_label = f"📬  Replies & Drafts  🔴 {_reply_count}" if _reply_count else "📬  Replies & Drafts"
     except Exception:
@@ -224,51 +216,51 @@ with st.sidebar:
         except Exception:
             pass
 
-    # ── Scheduler status ──────────────────────
+    # ── Scheduler status — run_scheduler.py se check karo ────────────────────
     st.divider()
-    sched = st.session_state.get("scheduler")
-    if sched and sched.running:
+    _sched_running = _check_scheduler_process()
+    if _sched_running:
         st.markdown(
             '<p style="color:#4ade80;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">'
-            '🟢 AUTO-CHECK ON</p>',
+            '🟢 SCHEDULER ON</p>',
             unsafe_allow_html=True
         )
-        jobs = sched.get_jobs()
-        for job in jobs:
-            if job.next_run_time:
-                label = {
-                    "reply_check"         : "Replies",
-                    "followup_check"      : "Follow ups",
-                    "company_feed_refresh": "Feed"
-                }.get(job.id, job.id)
-                next_t = job.next_run_time.strftime("%H:%M")
-                st.markdown(
-                    f'<p style="color:#555;font-size:10px;font-family:\'Space Mono\',monospace;margin:2px 0">'
-                    f'· {label}: {next_t}</p>',
-                    unsafe_allow_html=True
-                )
+        st.markdown(
+            '<p style="color:#555;font-size:10px;font-family:\'Space Mono\',monospace;margin:2px 0">'
+            '· run_scheduler.py chal raha hai</p>',
+            unsafe_allow_html=True
+        )
     else:
-        err = st.session_state.get("scheduler_error", "")
         st.markdown(
             '<p style="color:#f87171;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">'
             '🔴 SCHEDULER OFF</p>',
             unsafe_allow_html=True
         )
-        if err:
-            st.caption(f"Error: {err[:60]}")
+        st.markdown(
+            '<p style="color:#555;font-size:10px;font-family:\'Space Mono\',monospace;margin:2px 0">'
+            '· python run_scheduler.py chalao</p>',
+            unsafe_allow_html=True
+        )
 
     st.divider()
     if st.button("Logout", key="logout_btn", use_container_width=True):
         _remember_me_clear()
-        sched = st.session_state.get("scheduler")
-        if sched and sched.running:
-            try:
-                sched.shutdown(wait=False)
-            except Exception:
-                pass
         for k in list(st.session_state.keys()):
             del st.session_state[k]
         st.rerun()
+
+
+def _check_scheduler_process() -> bool:
+    """Check karo ki run_scheduler.py process chal rahi hai ya nahi."""
+    try:
+        import psutil
+        for proc in psutil.process_iter(["cmdline"]):
+            cmdline = " ".join(proc.info["cmdline"] or [])
+            if "run_scheduler.py" in cmdline:
+                return True
+    except Exception:
+        pass
+    return False
 
 
 # ─────────────────────────────────────────────
@@ -335,11 +327,10 @@ with left:
     has_notifs = False
     now        = datetime.utcnow()
 
-    # ── DB-based reply notifications (reply_handler) ──
     try:
         from backend.pipeline.reply_handler import NotificationManager
-        db_notifs     = NotificationManager.get_pending_notifications(user_id)
-        reply_notifs  = [n for n in db_notifs if n["type"] == "reply_received"]
+        db_notifs    = NotificationManager.get_pending_notifications(user_id)
+        reply_notifs = [n for n in db_notifs if n["type"] == "reply_received"]
 
         if reply_notifs:
             has_notifs = True
@@ -353,13 +344,9 @@ with left:
                 with col_btn:
                     if st.button("View", key=f"view_notif_{notif['id']}"):
                         st.switch_page("pages/3_replies.py")
-
-            # Show count if more than 3
             if len(reply_notifs) > 3:
                 st.caption(f"+ {len(reply_notifs) - 3} more replies — see Replies page")
-
-    except Exception as e:
-        # Fallback: read from JSON log if DB fails
+    except Exception:
         new_replies = [e for e in sent_log if e.get("replied") and e.get("reply_at")]
         for entry in sorted(new_replies, key=lambda x: x.get("reply_at", ""), reverse=True)[:3]:
             company  = entry.get("company", entry.get("to", ""))
@@ -367,22 +354,17 @@ with left:
             st.success(f"**Reply received** — {company}  ·  {reply_at}")
             has_notifs = True
 
-    # ── Pending draft approvals ───────────────
     try:
         from backend.pipeline.reply_handler import DraftApprovalManager
         pending_drafts = DraftApprovalManager.get_pending_drafts(user_id)
         if pending_drafts:
             has_notifs = True
-            st.warning(
-                f"**✏️ {len(pending_drafts)} draft(s) awaiting your approval** — "
-                f"review and send on the Replies page"
-            )
+            st.warning(f"**✏️ {len(pending_drafts)} draft(s) awaiting your approval**")
             if st.button("Review Drafts", key="home_drafts"):
                 st.switch_page("pages/3_replies.py")
     except Exception:
         pass
 
-    # ── Follow-up due (from JSON log) ─────────
     due_followups = []
     for entry in sent_log:
         if entry.get("replied") or entry.get("followup_count", 0) >= 2:
@@ -399,7 +381,6 @@ with left:
         if st.button("Send Follow Ups Now", key="home_fu"):
             st.switch_page("pages/5_tracker.py")
 
-    # ── Long awaiting ─────────────────────────
     long_awaiting = []
     for entry in sent_log:
         if not entry.get("replied") and not entry.get("followup_sent"):
@@ -417,7 +398,6 @@ with left:
         st.caption("No notifications yet. Start cold outreach to see activity here.")
 
     st.markdown("<br>", unsafe_allow_html=True)
-
     col_n1, col_n2 = st.columns(2)
     with col_n1:
         if st.button("📬 Replies & Drafts", key="home_replies", use_container_width=True):
@@ -486,7 +466,6 @@ with right:
         msg = "Saari companies outreach ho chuki hain! Refresh karo nayi laane ke liye." \
               if feed_companies else "Feed empty hai. Refresh Feed karo."
         st.info(msg)
-
     else:
         source_label = {"yc_api": "YC", "betalist": "Betalist", "product_hunt": "Product Hunt"}
 
@@ -497,31 +476,21 @@ with right:
             src      = source_label.get(company.get("source", ""), "")
             contacts = company.get("contacts", [])
 
-            best_email        = None
-            best_contact_name = None
+            best_email = best_contact_name = None
             for c in contacts:
                 if c.get("email") and c.get("verified"):
-                    best_email        = c["email"]
-                    best_contact_name = c.get("name", "")
-                    break
+                    best_email = c["email"]; best_contact_name = c.get("name", ""); break
             if not best_email:
                 for c in contacts:
                     if c.get("email"):
-                        best_email        = c["email"]
-                        best_contact_name = c.get("name", "")
-                        break
+                        best_email = c["email"]; best_contact_name = c.get("name", ""); break
             if best_email and "@www." in best_email:
                 best_email = best_email.replace("@www.", "@")
 
             with st.container(border=True):
-                title = f"**{name}**"
-                if src:
-                    title += f"  —  {src}"
-                st.markdown(title)
-
+                st.markdown(f"**{name}**" + (f"  —  {src}" if src else ""))
                 if desc:
                     st.caption(desc)
-
                 col_w, col_e = st.columns(2)
                 with col_w:
                     if website:
@@ -532,18 +501,14 @@ with right:
                 with col_e:
                     if best_email:
                         verified = any(c.get("verified") and c.get("email") == best_email for c in contacts)
-                        icon     = "✅" if verified else "📧"
-                        label    = f"{best_contact_name}  ·  " if best_contact_name else ""
+                        icon  = "✅" if verified else "📧"
+                        label = f"{best_contact_name}  ·  " if best_contact_name else ""
                         st.caption(f"{icon}  {label}{best_email}")
                     else:
                         st.caption("No email found")
 
-                if st.button(
-                    "✉️ Outreach Karo",
-                    key  = f"feed_outreach_{idx}",
-                    use_container_width = True,
-                    type = "primary",
-                ):
+                if st.button("✉️ Outreach Karo", key=f"feed_outreach_{idx}",
+                             use_container_width=True, type="primary"):
                     from backend.utils.feed_to_db import save_feed_company_to_db
                     _, co_id = save_feed_company_to_db(user_id, company)
                     st.session_state["feed_outreach_company"] = company
