@@ -52,7 +52,7 @@ def build_track_b_graph():
 
     graph.add_node("scrape_companies",   scrape_companies_node)
     graph.add_node("research_companies", research_companies_node)
-    graph.add_node("optimize_resumes",   optimize_resumes_b_node)
+   
     graph.add_node("generate_emails",    generate_emails_node)
     graph.add_node("send_emails",        send_emails_node)
 
@@ -63,12 +63,12 @@ def build_track_b_graph():
         track_b_after_scrape,
         {
             "end"     : END,
-            "continue": "optimize_resumes"   # INTERRUPT fires here first
+            "continue": "research_companies"   # INTERRUPT fires here first
         }
     )
 
     # After user selects companies → research them automatically
-    graph.add_edge("optimize_resumes",   "research_companies")  # wait, see note below
+    
     graph.add_edge("research_companies", "generate_emails")
     graph.add_edge("generate_emails",    "send_emails")
     graph.add_edge("send_emails",        END)
@@ -78,7 +78,7 @@ def build_track_b_graph():
     compiled = graph.compile(
         checkpointer     = checkpointer,
         interrupt_before = [
-            "optimize_resumes",  # INTERRUPT 1 — company selection
+            
             "send_emails",       # INTERRUPT 2 — email review before send
             # NOTE: resume review interrupt removed — auto-approve optimized resume
             # NOTE: generate_emails runs automatically after research

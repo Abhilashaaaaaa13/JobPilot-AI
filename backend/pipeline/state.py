@@ -33,16 +33,7 @@ class CompanyResult(TypedDict):
     ai_related       : Optional[bool]
 
 
-class ResumeReview(TypedDict):
-    id            : str
-    job_title     : str
-    company       : str
-    original_path : str
-    optimized_path: str
-    ats_before    : float
-    ats_after     : float
-    changes       : list[str]
-    decision      : Optional[str]   # accept / reject / None (auto-approved)
+
 
 
 class EmailReview(TypedDict):
@@ -80,10 +71,7 @@ class TrackBState(TypedDict):
     # Step 2 — User selects (research enrichment happens after this)
     selected_companies: list[CompanyResult]
 
-    # Step 3 — Resume optimization
-    resume_reviews      : list[ResumeReview]
-    approved_resume_ids : list[str]   # empty = auto-approve all
-    rejected_resume_ids : list[str]
+    
 
     # Step 4 — Email generation
     email_reviews      : list[EmailReview]
