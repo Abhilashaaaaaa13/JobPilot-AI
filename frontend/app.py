@@ -183,6 +183,17 @@ if "user_id" not in st.session_state:
 # ─────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────
+def _check_scheduler_process() -> bool:
+    """Check karo ki run_scheduler.py process chal rahi hai ya nahi."""
+    try:
+        import psutil
+        for proc in psutil.process_iter(["cmdline"]):
+            cmdline = " ".join(proc.info["cmdline"] or [])
+            if "run_scheduler.py" in cmdline:
+                return True
+    except Exception:
+        pass
+    return False
 
 with st.sidebar:
     st.markdown("### ⚡ OutreachAI")
@@ -250,17 +261,6 @@ with st.sidebar:
         st.rerun()
 
 
-def _check_scheduler_process() -> bool:
-    """Check karo ki run_scheduler.py process chal rahi hai ya nahi."""
-    try:
-        import psutil
-        for proc in psutil.process_iter(["cmdline"]):
-            cmdline = " ".join(proc.info["cmdline"] or [])
-            if "run_scheduler.py" in cmdline:
-                return True
-    except Exception:
-        pass
-    return False
 
 
 # ─────────────────────────────────────────────
