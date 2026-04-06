@@ -1,8 +1,7 @@
 # backend/agents/feed_agent.py
 #
 # Global "New Startups" feed.
-# Sources: YC API + Betalist + Product Hunt
-# HN "Who is Hiring" removed — job postings thread tha, company data nahi milta.
+# Sources: YC + Betalist + Product Hunt + Indie Hackers + GitHub Trending + HN Hiring
 # Scheduler se har 24 ghante call hota hai.
 # Frontend data/company_feed.json read karta hai.
 
@@ -15,8 +14,6 @@ from loguru   import logger
 
 FEED_PATH     = os.path.join("data", "company_feed.json")
 MAX_COMPANIES = 200
-
-PRODUCT_HUNT_TOKEN = os.getenv("PRODUCT_HUNT_TOKEN", "")
 
 _FEED_PREFS = {
     "domains"     : ["ai_ml", "data_science", "software", "full_stack", "backend"],
@@ -115,104 +112,13 @@ def _deduplicate(existing: list, fresh: list) -> list:
 
 
 # ─────────────────────────────────────────────
-# PRODUCT HUNT SOURCE
-# — Structured data: real company names, taglines, websites
-# — No parsing heuristics needed
-# ─────────────────────────────────────────────
-
-def _fetch_product_hunt(limit: int = 20) -> list:
-    """
-    Product Hunt GraphQL API se latest tech products fetch karo.
-    Token nahi hai? Skip silently.
-    """
-    if not PRODUCT_HUNT_TOKEN:
-        logger.info("  Product Hunt token nahi hai — skipping")
-        return []
-
-    query = """
-    query {
-      posts(first: %d, order: NEWEST, topic: "developer-tools") {
-        edges {
-          node {
-            name
-            tagline
-            description
-            website
-            votesCount
-            makers {
-              name
-              twitterUsername
-            }
-          }
-        }
-      }
-    }
-    """ % limit
-
-    try:
-        res = req.post(
-            "https://api.producthunt.com/v2/api/graphql",
-            json={"query": query},
-            headers={
-                "Authorization": f"Bearer {PRODUCT_HUNT_TOKEN}",
-                "Content-Type" : "application/json",
-            },
-            timeout=15,
-        )
-        edges = res.json().get("data", {}).get("posts", {}).get("edges", [])
-    except Exception as e:
-        logger.error(f"Product Hunt error: {e}")
-        return []
-
-    companies = []
-    for edge in edges:
-        node    = edge.get("node", {})
-        name    = node.get("name",        "")
-        tagline = node.get("tagline",     "")
-        desc    = node.get("description", "") or tagline
-        website = node.get("website",     "")
-        makers  = node.get("makers",      [])
-
-        if not name or not website:
-            continue
-
-        contacts = []
-        for maker in makers[:2]:
-            maker_name = maker.get("name", "")
-            twitter    = maker.get("twitterUsername", "")
-            if maker_name:
-                contacts.append({
-                    "name"    : maker_name,
-                    "role"    : "Maker",
-                    "email"   : None,
-                    "twitter" : f"https://twitter.com/{twitter}" if twitter else "",
-                    "verified": False,
-                })
-
-        companies.append({
-            "name"       : name,
-            "website"    : website,
-            "one_liner"  : tagline,
-            "description": desc[:500],
-            "funding"    : "Product Hunt",
-            "team_size"  : "Unknown",
-            "location"   : "Remote",
-            "source"     : "product_hunt",
-            "contacts"   : contacts,
-        })
-
-    logger.info(f"  Product Hunt: {len(companies)} products")
-    return companies
-
-
-# ─────────────────────────────────────────────
-# ENRICH
+# ENRICH (tab karo jab user select kare — not in bulk)
 # ─────────────────────────────────────────────
 
 def _enrich_company(company: dict) -> dict:
     try:
-        from backend.agents.research_agent import research_company
-        research = research_company(
+        from backend.agents.research_agent import research_agent
+        research = research_agent(
             company_name = company["name"],
             website      = company.get("website", ""),
             description  = company.get("description", "")
@@ -224,6 +130,8 @@ def _enrich_company(company: dict) -> dict:
             "ai_hook"         : research.get("ai_hook",          ""),
             "tech_stack"      : research.get("tech_stack",       []),
             "ai_related"      : research.get("ai_related",       False),
+            # website update karo agar research agent ne dhundha
+            "website"         : research.get("website",          company.get("website", "")),
         }
     except Exception as e:
         logger.warning(f"Enrich error {company.get('name')}: {e}")
@@ -231,29 +139,31 @@ def _enrich_company(company: dict) -> dict:
 
 
 # ─────────────────────────────────────────────
-# MAIN
+# MAIN — Feed Refresh
 # ─────────────────────────────────────────────
 
 def refresh_feed(enrich: bool = False) -> dict:
+    """
+    Sab sources se fresh companies fetch karo.
+    scraper_agent already sab sources handle karta hai parallel mein.
+    enrich=True sirf background scheduler use kare — user flow mein nahi.
+    """
     logger.info("Refreshing global company feed...")
 
-    from backend.agents.scraper_agent import scrape_track_b
+    from backend.agents.scraper_agent import scraper_agent
 
-    # Source 1 + 2: YC + Betalist
     try:
-        fresh = scrape_track_b(_FEED_PREFS)
-        logger.info(f"  Scraped (YC + Betalist): {len(fresh)} companies")
+        fresh = scraper_agent(_FEED_PREFS)
+        logger.info(f"  Scraped (all sources): {len(fresh)} companies")
     except Exception as e:
         logger.error(f"Scrape error: {e}")
         fresh = []
 
-    # Source 3: Product Hunt (agar token hai)
-    ph_companies = _fetch_product_hunt(limit=20)
-    fresh.extend(ph_companies)
-
     logger.info(f"  Total fresh: {len(fresh)} companies")
 
+    # Enrich — sirf background mein, user flow mein nahi (latency avoid)
     if enrich and fresh:
+        logger.info("  Enriching companies (background)...")
         fresh = [_enrich_company(c) for c in fresh]
 
     # Clean all text fields
@@ -274,7 +184,7 @@ def refresh_feed(enrich: bool = False) -> dict:
         "total"       : len(merged),
     })
 
-    logger.info(f"  Feed updated -- {len(merged)} total, {new_count} new")
+    logger.info(f"  Feed updated — {len(merged)} total, {new_count} new")
 
     return {
         "total"       : len(merged),

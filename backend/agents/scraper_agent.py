@@ -1,8 +1,8 @@
 # backend/agents/scraper_agent.py
 #
-# Sources: YC API + Betalist
-# HN "Who is Hiring" removed — job postings thread hai, company directory nahi.
-# Parsed data unreliable tha (role names as company names, no proper descriptions).
+# Sources: YC API + Betalist + Product Hunt + Indie Hackers + GitHub Trending + HN Hiring
+# Agent logic: fallback to cached feed if < 10 companies scraped
+# All sources run in parallel via ThreadPoolExecutor
 
 import asyncio
 import sys
@@ -10,17 +10,18 @@ import time
 import random
 import re
 import requests as req
-from bs4                      import BeautifulSoup
-from playwright.async_api     import async_playwright
-from loguru                   import logger
-from concurrent.futures       import ThreadPoolExecutor, as_completed
-from typing                   import Generator
+from bs4                  import BeautifulSoup
+from playwright.async_api import async_playwright
+from loguru               import logger
+from concurrent.futures   import ThreadPoolExecutor, as_completed
+from typing               import Generator
 
 import os
 from dotenv import load_dotenv
 load_dotenv()
 
-APOLLO_API_KEY = os.getenv("APOLLO_API_KEY", "")
+APOLLO_API_KEY     = os.getenv("APOLLO_API_KEY",     "")
+PRODUCT_HUNT_TOKEN = os.getenv("PRODUCT_HUNT_TOKEN", "")
 
 EMAIL_RE = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
 HEADERS  = {
@@ -46,9 +47,9 @@ def random_delay():
 def get_domain(website: str) -> str:
     return (
         website.replace("https://", "")
-                .replace("http://", "")
-                .rstrip("/")
-                .split("/")[0]
+               .replace("http://", "")
+               .rstrip("/")
+               .split("/")[0]
     )
 
 
@@ -136,8 +137,8 @@ def find_best_email(name: str, domain: str) -> dict:
         return {"email": None, "verified": False, "source": "none"}
 
     parts = name.lower().strip().split()
-    first = parts[0]           if parts          else ""
-    last  = parts[-1]          if len(parts) > 1 else ""
+    first = parts[0]  if parts          else ""
+    last  = parts[-1] if len(parts) > 1 else ""
 
     if not first:
         return {"email": None, "verified": False, "source": "none"}
@@ -349,8 +350,493 @@ def _run_betalist(prefs: dict) -> list:
         loop.close()
 
 
-def stream_betalist(prefs: dict) -> Generator:
-    yield from _run_betalist(prefs)
+# ═════════════════════════════════════════════
+# SOURCE 3 — PRODUCT HUNT (free tier)
+# ═════════════════════════════════════════════
+
+def _run_product_hunt(prefs: dict = None, limit: int = 20) -> list:
+    """
+    Product Hunt GraphQL API — token chahiye (free tier available).
+    Token nahi? Skip silently.
+    """
+    if not PRODUCT_HUNT_TOKEN:
+        logger.info("  Product Hunt token nahi hai — skipping")
+        return []
+
+    query = """
+    query {
+      posts(first: %d, order: NEWEST, topic: "developer-tools") {
+        edges {
+          node {
+            name tagline description website votesCount
+            makers { name twitterUsername }
+          }
+        }
+      }
+    }
+    """ % limit
+
+    try:
+        res   = req.post(
+            "https://api.producthunt.com/v2/api/graphql",
+            json    = {"query": query},
+            headers = {
+                "Authorization": f"Bearer {PRODUCT_HUNT_TOKEN}",
+                "Content-Type" : "application/json",
+            },
+            timeout=15,
+        )
+        edges = res.json().get("data", {}).get("posts", {}).get("edges", [])
+    except Exception as e:
+        logger.error(f"Product Hunt error: {e}")
+        return []
+
+    companies = []
+    for edge in edges:
+        node    = edge.get("node", {})
+        name    = node.get("name",        "")
+        tagline = node.get("tagline",     "")
+        desc    = node.get("description", "") or tagline
+        website = node.get("website",     "")
+        makers  = node.get("makers",      [])
+
+        if not name or not website:
+            continue
+
+        contacts = []
+        for maker in makers[:2]:
+            mname   = maker.get("name", "")
+            twitter = maker.get("twitterUsername", "")
+            if mname:
+                contacts.append({
+                    "name"    : mname,
+                    "role"    : "Maker",
+                    "email"   : None,
+                    "twitter" : f"https://twitter.com/{twitter}" if twitter else "",
+                    "verified": False,
+                })
+
+        companies.append({
+            "name"       : name,
+            "website"    : website,
+            "one_liner"  : tagline,
+            "description": desc[:500],
+            "funding"    : "Product Hunt",
+            "team_size"  : "Unknown",
+            "location"   : "Remote",
+            "source"     : "product_hunt",
+            "contacts"   : contacts,
+        })
+
+    logger.info(f"  Product Hunt: {len(companies)} companies")
+    return companies
+
+
+# ═════════════════════════════════════════════
+# SOURCE 4 — INDIE HACKERS (free, no auth)
+# Bootstrapped founders — direct contact info milti hai
+# ═════════════════════════════════════════════
+
+def _run_indie_hackers(prefs: dict = None) -> list:
+    """
+    Indie Hackers products page scrape karo.
+    Bootstrapped founders milte hain — great for cold outreach.
+    No auth needed.
+    """
+    companies = []
+
+    try:
+        res = req.get(
+            "https://www.indiehackers.com/products",
+            headers=HEADERS,
+            timeout=15,
+        )
+        if res.status_code != 200:
+            logger.warning(f"  Indie Hackers status: {res.status_code}")
+            return []
+
+        soup  = BeautifulSoup(res.text, "html.parser")
+
+        # Product cards dhundho
+        cards = soup.find_all("a", href=re.compile(r"/product/"))
+
+        seen = set()
+        for card in cards[:20]:
+            try:
+                href = card.get("href", "")
+                if not href or href in seen:
+                    continue
+                seen.add(href)
+
+                # Product name
+                name_el = card.find(
+                    ["h2", "h3", "span"],
+                    class_=re.compile(r"title|name|product", re.I)
+                )
+                name = name_el.get_text(strip=True) if name_el else ""
+
+                # Tagline
+                desc_el = card.find(
+                    ["p", "span"],
+                    class_=re.compile(r"tagline|desc|pitch", re.I)
+                )
+                desc = desc_el.get_text(strip=True) if desc_el else ""
+
+                if not name:
+                    continue
+
+                # Product page fetch — website + founder
+                product_url = f"https://www.indiehackers.com{href}"
+                website, founder_name = _fetch_ih_product_page(product_url)
+
+                if not website:
+                    clean   = name.lower().replace(" ", "")
+                    website = f"https://{clean}.com"
+
+                contacts = []
+                if founder_name and website:
+                    domain = get_domain(website)
+                    email  = find_best_email(founder_name, domain)
+                    if email.get("email"):
+                        contacts.append({
+                            "name"    : founder_name,
+                            "role"    : "Founder",
+                            "email"   : email["email"],
+                            "verified": email["verified"],
+                        })
+
+                companies.append({
+                    "name"       : name,
+                    "website"    : website,
+                    "one_liner"  : desc,
+                    "description": desc,
+                    "funding"    : "Bootstrapped",
+                    "team_size"  : "1-5",
+                    "location"   : "Remote",
+                    "source"     : "indie_hackers",
+                    "contacts"   : contacts,
+                })
+
+            except Exception:
+                continue
+
+    except Exception as e:
+        logger.error(f"  Indie Hackers error: {e}")
+
+    logger.info(f"  Indie Hackers: {len(companies)} companies")
+    return companies
+
+
+def _fetch_ih_product_page(url: str) -> tuple:
+    """Product page se website + founder name nikalo."""
+    try:
+        res = req.get(url, headers=HEADERS, timeout=8)
+        if res.status_code != 200:
+            return "", ""
+
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        # Website link
+        website = ""
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if href.startswith("http") and "indiehackers" not in href:
+                website = href
+                break
+
+        # Founder name
+        founder = ""
+        founder_el = soup.find(
+            ["a", "span"],
+            class_=re.compile(r"founder|maker|author", re.I)
+        )
+        if founder_el:
+            founder = founder_el.get_text(strip=True)
+
+        return website, founder
+
+    except Exception:
+        return "", ""
+
+
+# ═════════════════════════════════════════════
+# SOURCE 5 — GITHUB TRENDING (free, no auth)
+# Tech companies jo actively build kar rahe hain
+# ═════════════════════════════════════════════
+
+def _run_github_trending(prefs: dict = None) -> list:
+    """
+    GitHub trending repositories — tech stack automatically pata chalta hai.
+    Company/org repos dhundho — founders ke profiles milte hain.
+    No auth needed (public API).
+    """
+    companies = []
+
+    # GitHub Search API — recently active, popular repos
+    queries = [
+        "topic:saas pushed:>2024-01-01",
+        "topic:ai-tools pushed:>2024-01-01",
+        "topic:developer-tools pushed:>2024-01-01",
+    ]
+
+    seen_orgs = set()
+
+    for query in queries:
+        try:
+            res = req.get(
+                "https://api.github.com/search/repositories",
+                params={
+                    "q"       : query,
+                    "sort"    : "stars",
+                    "order"   : "desc",
+                    "per_page": 10,
+                },
+                headers={**HEADERS, "Accept": "application/vnd.github+json"},
+                timeout=10,
+            )
+
+            if res.status_code == 403:
+                logger.warning("  GitHub rate limit — skipping")
+                break
+
+            items = res.json().get("items", [])
+
+            for item in items:
+                owner = item.get("owner", {})
+                org   = owner.get("login", "")
+                otype = owner.get("type",  "")
+
+                # Only organizations — individual repos skip
+                if otype != "Organization" or org in seen_orgs:
+                    continue
+                seen_orgs.add(org)
+
+                name        = item.get("name",            "")
+                desc        = item.get("description",     "") or ""
+                lang        = item.get("language",        "") or ""
+                topics      = item.get("topics",          [])
+                homepage    = item.get("homepage",        "") or ""
+                stars       = item.get("stargazers_count", 0)
+                html_url    = item.get("html_url",        "")
+
+                # Company name = org name (cleaner)
+                company_name = org.replace("-", " ").replace("_", " ").title()
+
+                website = homepage if homepage.startswith("http") else f"https://github.com/{org}"
+
+                tech_stack = [lang] if lang else []
+                tech_stack += [t for t in topics[:4] if t not in tech_stack]
+
+                # Org ke founders/members dhundho
+                contacts = _get_github_org_contacts(org, website)
+
+                companies.append({
+                    "name"       : company_name,
+                    "website"    : website,
+                    "one_liner"  : desc[:150],
+                    "description": desc[:500],
+                    "funding"    : "Open Source / Startup",
+                    "team_size"  : "Unknown",
+                    "location"   : "Remote",
+                    "source"     : "github_trending",
+                    "tech_stack" : tech_stack,
+                    "contacts"   : contacts,
+                    "github_stars": stars,
+                    "github_url" : html_url,
+                })
+
+            time.sleep(1)  # GitHub rate limit se bachao
+
+        except Exception as e:
+            logger.error(f"  GitHub trending error ({query}): {e}")
+            continue
+
+    logger.info(f"  GitHub Trending: {len(companies)} companies")
+    return companies
+
+
+def _get_github_org_contacts(org: str, website: str) -> list:
+    """GitHub org ke public members se contacts nikalo."""
+    contacts = []
+    try:
+        res = req.get(
+            f"https://api.github.com/orgs/{org}/members",
+            params  = {"per_page": 5},
+            headers = {**HEADERS, "Accept": "application/vnd.github+json"},
+            timeout = 8,
+        )
+        if res.status_code != 200:
+            return []
+
+        members = res.json()
+        domain  = get_domain(website) if website else f"{org}.com"
+
+        for member in members[:3]:
+            username = member.get("login", "")
+            if not username:
+                continue
+
+            # Public profile se name fetch karo
+            profile_res = req.get(
+                f"https://api.github.com/users/{username}",
+                headers=HEADERS,
+                timeout=5,
+            )
+            if profile_res.status_code != 200:
+                continue
+
+            profile = profile_res.json()
+            name    = profile.get("name", "") or username
+            email   = profile.get("email", "")
+
+            if not email:
+                result = find_best_email(name, domain)
+                email  = result.get("email", "")
+
+            if email:
+                contacts.append({
+                    "name"    : name,
+                    "role"    : "Engineer / Founder",
+                    "email"   : email,
+                    "verified": bool(profile.get("email")),
+                    "github"  : f"https://github.com/{username}",
+                })
+
+    except Exception as e:
+        logger.warning(f"  GitHub org contacts error ({org}): {e}")
+
+    return contacts
+
+
+# ═════════════════════════════════════════════
+# SOURCE 6 — HACKER NEWS "WHO IS HIRING" (free)
+# Monthly thread — active companies hiring right now
+# ═════════════════════════════════════════════
+
+def _run_hn_hiring(prefs: dict = None) -> list:
+    """
+    HN 'Who is Hiring' monthly thread se companies nikalo.
+    Direct hiring posts — company name + sometimes website.
+    No auth needed.
+    """
+    companies = []
+
+    try:
+        # Latest "Ask HN: Who is hiring?" thread dhundho
+        search_res = req.get(
+            "https://hn.algolia.com/api/v1/search",
+            params={
+                "query"      : "Ask HN: Who is hiring?",
+                "tags"       : "story",
+                "hitsPerPage": 5,
+            },
+            timeout=10,
+        )
+        hits = search_res.json().get("hits", [])
+
+        if not hits:
+            logger.warning("  HN: No hiring thread found")
+            return []
+
+        # Sabse latest thread
+        thread_id = hits[0].get("objectID", "")
+        if not thread_id:
+            return []
+
+        logger.info(f"  HN Hiring thread: {thread_id}")
+
+        # Thread ke comments fetch karo
+        comments_res = req.get(
+            "https://hn.algolia.com/api/v1/items/" + thread_id,
+            timeout=10,
+        )
+        thread = comments_res.json()
+        children = thread.get("children", [])
+
+        seen_names = set()
+
+        for comment in children[:50]:
+            try:
+                text = comment.get("text", "") or ""
+                if not text or len(text) < 30:
+                    continue
+
+                # HTML tags hata do
+                text_clean = BeautifulSoup(text, "html.parser").get_text()
+
+                # Company name — pehli line mein hoti hai usually
+                lines = [l.strip() for l in text_clean.split("\n") if l.strip()]
+                if not lines:
+                    continue
+
+                first_line = lines[0]
+
+                # "CompanyName | Role | Location" format common hai
+                parts = re.split(r'\|', first_line)
+                company_name = parts[0].strip() if parts else first_line[:60]
+
+                # Skip agar name duplicate ya too generic
+                if not company_name or company_name.lower() in seen_names:
+                    continue
+                if len(company_name) > 80 or len(company_name) < 2:
+                    continue
+                seen_names.add(company_name.lower())
+
+                # Website dhundho text mein
+                urls    = re.findall(r'https?://[^\s\)\]>\"]+', text_clean)
+                website = ""
+                for u in urls:
+                    if not any(skip in u for skip in ["linkedin", "glassdoor", "lever", "greenhouse", "ycombinator"]):
+                        website = u.rstrip(".,")
+                        break
+
+                if not website:
+                    clean   = company_name.lower().replace(" ", "")
+                    clean   = re.sub(r'[^a-z0-9]', '', clean)
+                    website = f"https://{clean}.com" if clean else ""
+
+                # Email dhundho text mein
+                emails_found = re.findall(EMAIL_RE, text_clean)
+                contacts     = []
+                for em in emails_found[:2]:
+                    if not any(s in em.lower() for s in SKIP):
+                        contacts.append({
+                            "name"    : "Hiring Contact",
+                            "role"    : "HR / Recruiter",
+                            "email"   : em,
+                            "verified": True,
+                        })
+
+                # Short description — lines join karo
+                desc = " ".join(lines[1:4])[:400] if len(lines) > 1 else first_line
+
+                # Remote/location check
+                location = "Remote"
+                if "onsite" in text_clean.lower() or "on-site" in text_clean.lower():
+                    location = "On-site"
+                elif "hybrid" in text_clean.lower():
+                    location = "Hybrid"
+
+                companies.append({
+                    "name"       : company_name,
+                    "website"    : website,
+                    "one_liner"  : desc[:150],
+                    "description": desc,
+                    "funding"    : "Unknown",
+                    "team_size"  : "Unknown",
+                    "location"   : location,
+                    "source"     : "hn_hiring",
+                    "contacts"   : contacts,
+                })
+
+            except Exception:
+                continue
+
+    except Exception as e:
+        logger.error(f"  HN Hiring error: {e}")
+
+    logger.info(f"  HN Hiring: {len(companies)} companies")
+    return companies
 
 
 # ═════════════════════════════════════════════
@@ -360,23 +846,44 @@ def stream_betalist(prefs: dict) -> Generator:
 def _run_yc(prefs: dict) -> list:
     return list(stream_yc_companies(prefs))
 
+def stream_betalist(prefs: dict) -> Generator:
+    yield from _run_betalist(prefs)
+
 
 # ═════════════════════════════════════════════
-# PARALLEL SCRAPING
+# AGENT — PARALLEL SCRAPING + FALLBACK
 # ═════════════════════════════════════════════
 
-def scrape_track_b(prefs: dict) -> list:
+def scraper_agent(prefs: dict) -> list:
     """
-    YC + Betalist parallel chalao.
-    HN removed — "Who is Hiring" thread job postings hai, company directory nahi.
-    Parsed data unreliable tha (role names as company names, no descriptions).
+    6 sources parallel chalao.
+    Koi fail hua → skip, baaki chalte rahen.
+
+    AGENT logic:
+    - Sab sources parallel run karo
+    - Agar < 10 companies mile → cached feed se fallback
+    - Har source independently fail ho sakta hai
+
+    Sources (all free):
+    1. YC API          — structured, best quality
+    2. Betalist        — pre-launch startups
+    3. Product Hunt    — developer tools (token chahiye)
+    4. Indie Hackers   — bootstrapped founders
+    5. GitHub Trending — active tech orgs
+    6. HN Hiring       — currently hiring companies
     """
     companies = []
-    scrapers  = [
-        ("yc",       _run_yc,       prefs),
-        ("betalist", _run_betalist, prefs),
+
+    scrapers = [
+        ("yc",            _run_yc,            prefs),
+        ("betalist",      _run_betalist,      prefs),
+        ("product_hunt",  _run_product_hunt,  prefs),
+        ("indie_hackers", _run_indie_hackers, prefs),
+        ("github",        _run_github_trending, prefs),
+        ("hn_hiring",     _run_hn_hiring,     prefs),
     ]
-    with ThreadPoolExecutor(max_workers=2) as executor:
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
         futures = {executor.submit(fn, p): name for name, fn, p in scrapers}
         for future in as_completed(futures):
             source = futures[future]
@@ -386,16 +893,40 @@ def scrape_track_b(prefs: dict) -> list:
                 logger.info(f"  ✅ {source}: {len(result)} companies")
             except Exception as e:
                 logger.error(f"  ❌ {source} failed: {e}")
+
+    # AGENT fallback — kam companies mile toh cache use karo
+    if len(companies) < 10:
+        logger.warning(
+            f"  ⚠️ Only {len(companies)} companies scraped — "
+            f"falling back to cached feed"
+        )
+        try:
+            from backend.agents.feed_agent import get_feed
+            cached = get_feed(limit=50).get("companies", [])
+            # Cached mein jo already hai woh add mat karo
+            existing_names = {c.get("name", "").lower() for c in companies}
+            for c in cached:
+                if c.get("name", "").lower() not in existing_names:
+                    companies.append(c)
+            logger.info(f"  📦 After cache fallback: {len(companies)} companies")
+        except Exception as e:
+            logger.error(f"  Cache fallback error: {e}")
+
     return companies
 
 
+# Backward compatibility — purana naam bhi kaam kare
+def scrape_track_b(prefs: dict) -> list:
+    return scraper_agent(prefs)
+
+
 def run(user_id: int, prefs: dict) -> dict:
-    logger.info(f"🚀 Scraper starting — user {user_id}")
+    logger.info(f"🚀 Scraper Agent starting — user {user_id}")
     logger.info(f"   Domains: {prefs.get('domains')}")
     logger.info(f"   Roles  : {prefs.get('target_roles')}")
-    track_b = scrape_track_b(prefs)
-    logger.info(f"   Total  : {len(track_b)} companies")
-    return {"track_b": track_b, "total_companies": len(track_b)}
+    companies = scraper_agent(prefs)
+    logger.info(f"   Total  : {len(companies)} companies")
+    return {"track_b": companies, "total_companies": len(companies)}
 
 
 # ─────────────────────────────────────────────

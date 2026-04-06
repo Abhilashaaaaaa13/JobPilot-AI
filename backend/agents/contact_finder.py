@@ -1,13 +1,21 @@
 # backend/agents/contact_finder.py
+#
 # Company ke CEO/CTO/Founder/HR dhundho
 # Phir unka email find karo
+#
+# AGENT VERSION:
+# - Team page scrape → Groq extract (already tha)
+# - Na mile → LinkedIn DuckDuckGo search
+# - Abhi bhi na mile → domain se founder guess karo
+#
 # DB-free — stateless, sirf company_name + website lega
 
 import json
 import requests as req
-from bs4    import BeautifulSoup
-from groq   import Groq
-from loguru import logger
+from bs4               import BeautifulSoup
+from groq              import Groq
+from duckduckgo_search import DDGS
+from loguru            import logger
 
 from backend.config import GROQ_API_KEY, LLM_MODEL, CONTACT_PRIORITY
 
@@ -105,6 +113,117 @@ If no people found, return empty array: []
 
 
 # ─────────────────────────────────────────────
+# AGENT FALLBACK 1 — LinkedIn Search
+# Team page pe koi nahi mila → LinkedIn try karo
+# ─────────────────────────────────────────────
+
+def _search_linkedin_people(company_name: str) -> list:
+    """
+    DuckDuckGo se LinkedIn profiles dhundho.
+    CEO → Founder → CTO order mein try karo.
+    """
+    people = []
+    seen   = set()
+
+    queries = [
+        (f"{company_name} CEO site:linkedin.com/in",      "CEO"),
+        (f"{company_name} founder site:linkedin.com/in",  "Founder"),
+        (f"{company_name} CTO site:linkedin.com/in",      "CTO"),
+        (f"{company_name} HR recruiter site:linkedin.com/in", "HR"),
+    ]
+
+    for query, role in queries:
+        try:
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=2))
+
+            for r in results:
+                title = r.get("title", "")
+                url   = r.get("href",  "")
+
+                # LinkedIn URL se naam nikalo
+                # Format: "John Doe - CEO at CompanyName | LinkedIn"
+                name = _extract_name_from_linkedin_title(title, company_name)
+
+                if not name or name.lower() in seen:
+                    continue
+                seen.add(name.lower())
+
+                people.append({
+                    "name"    : name,
+                    "role"    : role,
+                    "linkedin": url,
+                })
+
+                if len(people) >= 3:
+                    return people
+
+        except Exception as e:
+            logger.warning(f"  LinkedIn search error ({role}): {e}")
+            continue
+
+    return people
+
+
+def _extract_name_from_linkedin_title(title: str, company_name: str) -> str:
+    """
+    LinkedIn title se naam nikalo.
+    Formats:
+    - "John Doe - CEO at Acme Corp | LinkedIn"
+    - "John Doe | LinkedIn"
+    - "John Doe - Founder"
+    """
+    if not title:
+        return ""
+
+    # " - " se pehle wala part naam hota hai usually
+    parts = title.split(" - ")
+    if parts:
+        name_part = parts[0].strip()
+        # "| LinkedIn" hata do
+        name_part = name_part.replace("| LinkedIn", "").strip()
+        name_part = name_part.replace("LinkedIn", "").strip()
+
+        # Sirf agar 2+ words hain (first + last name)
+        words = name_part.split()
+        if 2 <= len(words) <= 4:
+            # Company name nahi hai naam mein
+            if company_name.lower() not in name_part.lower():
+                return name_part
+
+    return ""
+
+
+# ─────────────────────────────────────────────
+# AGENT FALLBACK 2 — Founder Guess
+# LinkedIn pe bhi nahi mila → domain se guess karo
+# ─────────────────────────────────────────────
+
+def _guess_founder(company_name: str, domain: str) -> list:
+    """
+    Last resort — domain se common founder email patterns guess karo.
+    Confidence low hogi — user ko dikhao.
+    """
+    logger.warning(f"  ⚠️ Guessing founder for {company_name} @ {domain}")
+
+    common_emails = [
+        f"founder@{domain}",
+        f"hello@{domain}",
+        f"hi@{domain}",
+        f"contact@{domain}",
+    ]
+
+    return [{
+        "name"      : f"{company_name} Team",
+        "role"      : "Founder",
+        "email"     : common_emails[0],
+        "linkedin"  : None,
+        "guessed"   : True,        # flag — low confidence
+        "confidence": 0.2,
+    }]
+
+
+# ─────────────────────────────────────────────
 # STEP 3 — Priority Assign Karo
 # ─────────────────────────────────────────────
 
@@ -117,47 +236,58 @@ def get_priority(role: str) -> int:
 
 
 # ─────────────────────────────────────────────
-# MAIN — Stateless Contact Finder
+# MAIN — Contact Finder Agent
 # ─────────────────────────────────────────────
 
-def find_contacts(
+def contact_finder_agent(
     company_name: str,
     website     : str,
     description : str = ""
 ) -> dict:
     """
-    Ek company ke contacts dhundho — DB-free.
-    Sirf company_name + website chahiye.
-    Returns dict with 'contacts' list.
+    AGENT VERSION — khud decide karta hai:
+    1. Team page scrape → Groq extract
+    2. Nahi mile → LinkedIn DuckDuckGo search
+    3. Abhi bhi nahi mile → domain se guess
 
     Called by:
     - research_companies_node (pipeline)
     - feed_agent (scheduler)
     - API endpoints directly
     """
-    if not website:
-        return {"company": company_name, "contacts": []}
+    logger.info(f"👤 Contact Finder Agent: {company_name}")
 
-    logger.info(f"👤 Finding contacts: {company_name}")
+    # Website nahi hai toh bhi try karo — research_agent ne diya hoga
+    if not website:
+        logger.warning(f"  ⚠️ No website — skipping contact finder for {company_name}")
+        return {"company": company_name, "contacts": []}
 
     domain = (
         website.replace("https://", "")
-                .replace("http://", "")
-                .rstrip("/")
-                .split("/")[0]
+               .replace("http://", "")
+               .rstrip("/")
+               .split("/")[0]
     )
 
-    # Step 1 — Team page scrape
+    # ── DECISION 1 — Team page scrape ────────
     team_text = scrape_team_page(website)
+    people    = extract_people_with_groq(company_name, team_text, description)
 
-    # Step 2 — Groq se people extract
-    people = extract_people_with_groq(company_name, team_text, description)
+    if people:
+        logger.info(f"  ✅ Found {len(people)} people from team page")
+    else:
+        # ── DECISION 2 — LinkedIn fallback ───
+        logger.info(f"  Team page khali — LinkedIn search try kar raha hoon")
+        people = _search_linkedin_people(company_name)
 
-    if not people:
-        logger.warning(f"  ⚠️ No people found for {company_name}")
-        return {"company": company_name, "contacts": []}
+        if people:
+            logger.info(f"  ✅ Found {len(people)} people from LinkedIn")
+        else:
+            # ── DECISION 3 — Guess ───────────
+            logger.warning(f"  LinkedIn bhi khali — guessing founder")
+            people = _guess_founder(company_name, domain)
 
-    # Import here to avoid circular — scraper_agent also used in pipeline
+    # ── Email find karo har person ke liye ───
     from backend.agents.scraper_agent import find_best_email
 
     contacts = []
@@ -166,27 +296,42 @@ def find_contacts(
         name     = person.get("name",     "")
         role     = person.get("role",     "")
         linkedin = person.get("linkedin")
+        guessed  = person.get("guessed",  False)
 
         if not name:
             continue
 
+        # Agar already email hai (LinkedIn se ya guess se)
+        existing_email = person.get("email", "")
+
         try:
-            email_result = find_best_email(name, domain)
+            if existing_email and guessed:
+                # Guessed email — directly use karo
+                email_result = {
+                    "email"   : existing_email,
+                    "verified": False,
+                    "source"  : "guess",
+                }
+            else:
+                # find_best_email se dhundho
+                email_result = find_best_email(name, domain)
 
             contacts.append({
                 "name"            : name,
                 "role"            : role,
                 "email"           : email_result.get("email"),
                 "linkedin_url"    : linkedin,
-                "confidence_score": 1.0 if email_result.get("verified") else 0.5,
+                "confidence_score": 1.0 if email_result.get("verified") else (0.2 if guessed else 0.5),
                 "source"          : email_result.get("source", "pattern"),
                 "priority"        : get_priority(role),
+                "guessed"         : guessed,
             })
 
             logger.info(
                 f"  ✅ {name} ({role}) "
                 f"→ {email_result.get('email')} "
                 f"[{email_result.get('source')}]"
+                f"{' ⚠️ guessed' if guessed else ''}"
             )
 
         except Exception as e:
@@ -195,5 +340,14 @@ def find_contacts(
 
     return {
         "company" : company_name,
-        "contacts": contacts
+        "contacts": contacts,
     }
+
+
+# Backward compatibility
+def find_contacts(
+    company_name: str,
+    website     : str,
+    description : str = ""
+) -> dict:
+    return contact_finder_agent(company_name, website, description)
