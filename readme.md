@@ -1,4 +1,4 @@
-# OutreachAI
+# JobPilotAI
 
 Automated cold outreach pipeline for job seekers targeting startups. Find companies, research them, generate personalized emails, send via Gmail, auto follow-up, and track replies — all from one interface.
 
