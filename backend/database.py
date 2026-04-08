@@ -1,7 +1,7 @@
 # backend/database.py
 
 import os
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker, declarative_base
 from backend.config import DATABASE_URL
 from loguru import logger
@@ -32,34 +32,41 @@ def get_db():
 
 def _sqlite_add_missing_columns():
     """
-    SQLite ALTER TABLE workaround — nayi columns add karo agar exist na karein.
-    Har column ke liye ek baar silently try karta hai.
+    SQLite ALTER TABLE workaround — add new columns if they don't exist yet.
+    Safe to call on every startup.
     """
     if "sqlite" not in DATABASE_URL:
-        return  # Postgres/MySQL ke liye alembic use karo
+        return
 
-    # (table, column, definition)
     migrations = [
         ("companies", "user_id",          "INTEGER REFERENCES users(id)"),
         ("companies", "one_liner",        "VARCHAR(300)"),
         ("companies", "ai_hook",          "VARCHAR(500)"),
         ("companies", "recent_highlight", "VARCHAR(500)"),
+        ("companies", "github_url",       "VARCHAR(300) DEFAULT ''"),
+        ("companies", "github_stars",     "INTEGER DEFAULT 0"),
+        ("companies", "contacts_json",    "TEXT DEFAULT '[]'"),
+        ("companies", "feed_added_at",    "VARCHAR(50) DEFAULT ''"),
+        ("companies", "contacted_at",     "VARCHAR(50)"),
+        ("companies", "tech_stack",       "TEXT DEFAULT '[]'"),
     ]
+
+    inspector = inspect(engine)
 
     with engine.connect() as conn:
         for table, col, definition in migrations:
             try:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
-                conn.commit()
-                logger.info(f"Migration: added {table}.{col}")
-            except Exception:
-                # Column already exists — ignore
-                pass
+                existing_cols = [c["name"] for c in inspector.get_columns(table)]
+                if col not in existing_cols:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
+                    conn.commit()
+                    logger.info(f"Migration: added {table}.{col}")
+            except Exception as e:
+                logger.warning(f"Migration skip ({table}.{col}): {e}")
 
 
 def init_db():
     """Initialize database with all models"""
-    # Import all models here to register them with Base
     from backend.models.user import User, UserProfile
     from backend.models.company import Company
     from backend.models.contact import Contact
@@ -67,6 +74,8 @@ def init_db():
     from backend.models.notification import Notification
     from backend.models.draft_action import DraftAction
     from backend.models.application import Application
-    Base.metadata.create_all(bind=engine, checkfirst=True)
+
+    # create_all skips tables that already exist by default
+    Base.metadata.create_all(bind=engine)
     _sqlite_add_missing_columns()
     logger.info("✅ Database initialised")

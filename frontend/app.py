@@ -10,12 +10,8 @@ from backend.database import init_db
 
 init_db()
 
-# ── Scheduler — sirf status track karo, start mat karo ───────────────────────
-# Scheduler alag terminal mein chalta hai: `python run_scheduler.py`
-# Yahan sirf session_state mein None set karo taaki sidebar status kaam kare
 if "scheduler" not in st.session_state:
     st.session_state["scheduler"] = None
-# ─────────────────────────────────────────────
 
 st.set_page_config(
     page_title="OutreachAI",
@@ -49,9 +45,7 @@ h1,h2,h3{font-family:'Space Mono',monospace!important;letter-spacing:-.03em!impo
 """, unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────
-# AUTH HELPERS
-# ─────────────────────────────────────────────
+# ── Auth helpers ──────────────────────────────────────────────────────────────
 
 def register_user(email, password):
     from backend.database import SessionLocal
@@ -88,6 +82,8 @@ def login_user(email, password):
         db.close()
 
 
+# ── Remember-me helpers ───────────────────────────────────────────────────────
+
 def _remember_me_load():
     if os.path.exists(".session_token"):
         try:
@@ -99,7 +95,6 @@ def _remember_me_load():
             pass
     return None
 
-
 def _remember_me_save(uid, email):
     try:
         with open(".session_token", "w") as f:
@@ -107,25 +102,31 @@ def _remember_me_save(uid, email):
     except Exception:
         pass
 
-
 def _remember_me_clear():
     if os.path.exists(".session_token"):
         os.remove(".session_token")
 
 
-# ─────────────────────────────────────────────
-# AUTO LOGIN
-# ─────────────────────────────────────────────
+# ── Session restore — validate against DB before trusting ────────────────────
 
 if "user_id" not in st.session_state:
     saved = _remember_me_load()
     if saved:
-        st.session_state["user_id"] = saved["user_id"]
-        st.session_state["email"]   = saved["email"]
+        from backend.database import SessionLocal
+        from backend.models.user import User
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == saved["user_id"]).first()
+            if user and user.is_active:
+                st.session_state["user_id"] = saved["user_id"]
+                st.session_state["email"]   = saved["email"]
+            else:
+                _remember_me_clear()  # DB wiped or user deleted — clear stale token
+        finally:
+            db.close()
 
-# ─────────────────────────────────────────────
-# AUTH GATE
-# ─────────────────────────────────────────────
+
+# ── Login / Register page ─────────────────────────────────────────────────────
 
 if "user_id" not in st.session_state:
     _, col_m, _ = st.columns([1, 1.2, 1])
@@ -180,20 +181,20 @@ if "user_id" not in st.session_state:
     st.stop()
 
 
-# ─────────────────────────────────────────────
-# SIDEBAR
-# ─────────────────────────────────────────────
-def _check_scheduler_process() -> bool:
-    """Check karo ki run_scheduler.py process chal rahi hai ya nahi."""
+# ── Scheduler check ───────────────────────────────────────────────────────────
+
+def _check_scheduler_process():
     try:
         import psutil
-        for proc in psutil.process_iter(["cmdline"]):
-            cmdline = " ".join(proc.info["cmdline"] or [])
-            if "run_scheduler.py" in cmdline:
+        for p in psutil.process_iter(["cmdline"]):
+            if "run_scheduler.py" in " ".join(p.info["cmdline"] or []):
                 return True
     except Exception:
         pass
     return False
+
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.markdown("### ⚡ OutreachAI")
@@ -203,7 +204,6 @@ with st.sidebar:
     st.page_link("pages/2_onboarding.py", label="👤  Profile Setup", use_container_width=True)
     st.page_link("pages/4_outreach.py",   label="🚀  Cold Outreach", use_container_width=True)
     st.page_link("pages/5_tracker.py",    label="📊  Tracker",       use_container_width=True)
-
     try:
         from backend.pipeline.reply_handler import NotificationManager
         _pending     = NotificationManager.get_pending_notifications(st.session_state["user_id"])
@@ -212,7 +212,6 @@ with st.sidebar:
     except Exception:
         _reply_count  = 0
         _drafts_label = "📬  Replies & Drafts"
-
     st.page_link("pages/3_replies.py", label=_drafts_label, use_container_width=True)
     st.divider()
 
@@ -226,34 +225,17 @@ with st.sidebar:
             st.metric("Replies",     sum(1 for e in _log if e.get("replied")))
         except Exception:
             pass
-
-    # ── Scheduler status — run_scheduler.py se check karo ────────────────────
     st.divider()
+
     _sched_running = _check_scheduler_process()
     if _sched_running:
-        st.markdown(
-            '<p style="color:#4ade80;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">'
-            '🟢 SCHEDULER ON</p>',
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            '<p style="color:#555;font-size:10px;font-family:\'Space Mono\',monospace;margin:2px 0">'
-            '· run_scheduler.py chal raha hai</p>',
-            unsafe_allow_html=True
-        )
+        st.markdown('<p style="color:#4ade80;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">🟢 SCHEDULER ON</p>', unsafe_allow_html=True)
+        st.markdown('<p style="color:#555;font-size:10px;font-family:\'Space Mono\',monospace;margin:2px 0">· run_scheduler.py chal raha hai</p>', unsafe_allow_html=True)
     else:
-        st.markdown(
-            '<p style="color:#f87171;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">'
-            '🔴 SCHEDULER OFF</p>',
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            '<p style="color:#555;font-size:10px;font-family:\'Space Mono\',monospace;margin:2px 0">'
-            '· python run_scheduler.py chalao</p>',
-            unsafe_allow_html=True
-        )
-
+        st.markdown('<p style="color:#f87171;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">🔴 SCHEDULER OFF</p>', unsafe_allow_html=True)
+        st.markdown('<p style="color:#555;font-size:10px;font-family:\'Space Mono\',monospace;margin:2px 0">· python run_scheduler.py chalao</p>', unsafe_allow_html=True)
     st.divider()
+
     if st.button("Logout", key="logout_btn", use_container_width=True):
         _remember_me_clear()
         for k in list(st.session_state.keys()):
@@ -261,11 +243,7 @@ with st.sidebar:
         st.rerun()
 
 
-
-
-# ─────────────────────────────────────────────
-# PROFILE CHECK
-# ─────────────────────────────────────────────
+# ── Dashboard ─────────────────────────────────────────────────────────────────
 
 user_id = st.session_state["user_id"]
 st.markdown("# ⚡ Dashboard")
@@ -282,11 +260,6 @@ if not profile or not profile.resume_path:
         st.switch_page("pages/2_onboarding.py")
     st.stop()
 
-
-# ─────────────────────────────────────────────
-# LOAD SENT LOG
-# ─────────────────────────────────────────────
-
 log_file = f"uploads/{user_id}/sent_emails/log.json"
 sent_log = []
 if os.path.exists(log_file):
@@ -302,11 +275,6 @@ awaiting   = sum(1 for e in sent_log if not e.get("replied"))
 followups  = sum(1 for e in sent_log if e.get("followup_sent"))
 reply_rate = f"{int(replied/total_sent*100)}%" if total_sent else "—"
 
-
-# ─────────────────────────────────────────────
-# STATS ROW
-# ─────────────────────────────────────────────
-
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Emails Sent", total_sent)
 c2.metric("Replied",     replied)
@@ -318,9 +286,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 left, right = st.columns([1, 1.4], gap="large")
 
 
-# ─────────────────────────────────────────────
-# LEFT — NOTIFICATIONS
-# ─────────────────────────────────────────────
+# ── Notifications panel ───────────────────────────────────────────────────────
 
 with left:
     st.markdown("### 🔔 Notifications")
@@ -331,7 +297,6 @@ with left:
         from backend.pipeline.reply_handler import NotificationManager
         db_notifs    = NotificationManager.get_pending_notifications(user_id)
         reply_notifs = [n for n in db_notifs if n["type"] == "reply_received"]
-
         if reply_notifs:
             has_notifs = True
             for notif in reply_notifs[:3]:
@@ -345,7 +310,7 @@ with left:
                     if st.button("View", key=f"view_notif_{notif['id']}"):
                         st.switch_page("pages/3_replies.py")
             if len(reply_notifs) > 3:
-                st.caption(f"+ {len(reply_notifs) - 3} more replies — see Replies page")
+                st.caption(f"+ {len(reply_notifs)-3} more replies — see Replies page")
     except Exception:
         new_replies = [e for e in sent_log if e.get("replied") and e.get("reply_at")]
         for entry in sorted(new_replies, key=lambda x: x.get("reply_at", ""), reverse=True)[:3]:
@@ -374,7 +339,6 @@ with left:
                 due_followups.append(entry)
         except Exception:
             pass
-
     if due_followups:
         st.warning(f"**Follow-up due** — {len(due_followups)} email(s), 4+ din se reply nahi")
         has_notifs = True
@@ -389,7 +353,6 @@ with left:
                     long_awaiting.append(entry)
             except Exception:
                 pass
-
     if long_awaiting:
         st.info(f"**7+ days no reply** — {len(long_awaiting)} companies ghosting")
         has_notifs = True
@@ -407,74 +370,58 @@ with left:
             st.switch_page("pages/5_tracker.py")
 
 
-# ─────────────────────────────────────────────
-# RIGHT — NEW STARTUPS FEED
-# ─────────────────────────────────────────────
+# ── Feed panel ────────────────────────────────────────────────────────────────
+
+SOURCE_ICONS = {
+    "yc_api"         : "🟠 YC",
+    "betalist"       : "🟣 BL",
+    "product_hunt"   : "🔴 PH",
+    "indie_hackers"  : "🟢 IH",
+    "github_trending": "⚫ GH",
+    "hn_hiring"      : "🟡 HN",
+}
 
 with right:
     st.markdown("### 🆕 New Startups")
+    st.caption("🟠 YC &nbsp;·&nbsp; 🟣 BL &nbsp;·&nbsp; 🔴 PH &nbsp;·&nbsp; 🟢 IH &nbsp;·&nbsp; ⚫ GH &nbsp;·&nbsp; 🟡 HN")
 
-    feed_path      = "data/company_feed.json"
     feed_companies = []
     last_updated   = None
+    try:
+        from backend.utils.feed_to_db import load_feed_companies
+        feed_companies = load_feed_companies(user_id, limit=60)
+        last_updated   = "live"
+    except Exception:
+        feed_path = "data/company_feed.json"
+        if os.path.exists(feed_path):
+            try:
+                with open(feed_path, encoding="utf-8") as f:
+                    fd = json.load(f)
+                feed_companies = fd.get("companies", [])
+                last_updated   = fd.get("last_updated", "")
+            except Exception:
+                pass
 
-    if os.path.exists(feed_path):
+    if last_updated and last_updated != "live":
         try:
-            with open(feed_path, encoding="utf-8") as f:
-                fd = json.load(f)
-            feed_companies = fd.get("companies", [])
-            last_updated   = fd.get("last_updated", "")
+            lu = datetime.fromisoformat(last_updated)
+            st.caption(f"Updated {lu.strftime('%d %b %Y %H:%M')} UTC  ·  {len(feed_companies)} companies waiting")
         except Exception:
             pass
+    elif feed_companies:
+        st.caption(f"{len(feed_companies)} companies in DB — uncontacted")
 
-    contacted_names   = set()
-    contacted_domains = set()
-    for entry in sent_log:
-        n = (entry.get("company") or entry.get("to") or "").lower().strip()
-        if n:
-            contacted_names.add(n)
-        w = (entry.get("website") or "").lower()
-        if w:
-            d = w.replace("https://","").replace("http://","").rstrip("/").split("/")[0]
-            if d:
-                contacted_domains.add(d)
-
-    def _is_fresh(c):
-        if (c.get("name") or "").lower().strip() in contacted_names:
-            return False
-        w = (c.get("website") or "").lower()
-        if w:
-            d = w.replace("https://","").replace("http://","").rstrip("/").split("/")[0]
-            if d and d in contacted_domains:
-                return False
-        return True
-
-    fresh  = [c for c in feed_companies if _is_fresh(c)]
-    hidden = len(feed_companies) - len(fresh)
-
-    if last_updated:
-        try:
-            lu   = datetime.fromisoformat(last_updated)
-            note = f"Updated {lu.strftime('%d %b %Y %H:%M')} UTC"
-            if hidden:
-                note += f"  ·  {hidden} already contacted (hidden)"
-            st.caption(note)
-        except Exception:
-            pass
-
-    if not fresh:
-        msg = "Saari companies outreach ho chuki hain! Refresh karo nayi laane ke liye." \
-              if feed_companies else "Feed empty hai. Refresh Feed karo."
-        st.info(msg)
+    if not feed_companies:
+        st.info("Feed empty hai. 'Find More Startups' dabao ya Refresh Feed karo.")
     else:
-        source_label = {"yc_api": "YC", "betalist": "Betalist", "product_hunt": "Product Hunt"}
-
-        for idx, company in enumerate(fresh[:8]):
+        for idx, company in enumerate(feed_companies[:8]):
             name     = (company.get("name")     or "").strip()
             desc     = (company.get("one_liner") or company.get("description") or "").strip()[:120]
             website  = (company.get("website")   or "").strip()
-            src      = source_label.get(company.get("source", ""), "")
+            src      = SOURCE_ICONS.get(company.get("source", ""), "⚪")
             contacts = company.get("contacts", [])
+            stars    = company.get("github_stars", 0)
+            co_db_id = company.get("id")
 
             best_email = best_contact_name = None
             for c in contacts:
@@ -488,13 +435,16 @@ with right:
                 best_email = best_email.replace("@www.", "@")
 
             with st.container(border=True):
-                st.markdown(f"**{name}**" + (f"  —  {src}" if src else ""))
+                title_parts = [f"**{name}**", src]
+                if stars:
+                    title_parts.append(f"⭐{stars}")
+                st.markdown("  —  ".join(title_parts))
                 if desc:
                     st.caption(desc)
                 col_w, col_e = st.columns(2)
                 with col_w:
                     if website:
-                        display = website.replace("https://","").replace("http://","").rstrip("/").split("/")[0]
+                        display = website.replace("https://", "").replace("http://", "").rstrip("/").split("/")[0]
                         st.markdown(f"🔗 [{display}]({website})")
                     else:
                         st.caption("No website")
@@ -509,10 +459,11 @@ with right:
 
                 if st.button("✉️ Outreach Karo", key=f"feed_outreach_{idx}",
                              use_container_width=True, type="primary"):
-                    from backend.utils.feed_to_db import save_feed_company_to_db
-                    _, co_id = save_feed_company_to_db(user_id, company)
+                    if not co_db_id:
+                        from backend.utils.feed_to_db import save_feed_company_to_db
+                        _, co_db_id = save_feed_company_to_db(user_id, company)
                     st.session_state["feed_outreach_company"] = company
-                    st.session_state["feed_outreach_co_id"]   = co_id
+                    st.session_state["feed_outreach_co_id"]   = co_db_id
                     st.switch_page("pages/4_outreach.py")
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -525,8 +476,15 @@ with right:
             with st.spinner("Feed refresh ho raha hai..."):
                 try:
                     from backend.agents.feed_agent import refresh_feed
-                    result = refresh_feed()
-                    st.success(f"{result['new']} new companies added")
+                    result  = refresh_feed()
+                    new_cos = result.get("companies", [])
+                    if new_cos:
+                        from backend.utils.feed_to_db import save_companies_bulk, sync_feed_json
+                        added = save_companies_bulk(user_id, new_cos)
+                        sync_feed_json(user_id)
+                        st.success(f"{added} new companies added to DB")
+                    else:
+                        st.success(f"{result.get('new', 0)} new companies added")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")

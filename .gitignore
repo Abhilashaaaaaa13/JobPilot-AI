@@ -5,3 +5,4 @@ venv/
 uploads/
 data/
 credentials.json
+.session_token

@@ -1,45 +1,36 @@
 # backend/models/company.py
-# Sirf cold email targets
-# Job openings yahan nahi hain
-
-from sqlalchemy import (
-    Column, Integer, String,
-    Text, DateTime, Boolean, ForeignKey
-)
+from sqlalchemy import Column, Integer, String, Text, ForeignKey
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from backend.database import Base
 
 
 class Company(Base):
     __tablename__ = "companies"
 
-    id            = Column(Integer, primary_key=True, autoincrement=True)
+    id               = Column(Integer, primary_key=True, index=True)
+    user_id          = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
-    # User ownership (feed_to_db ke liye zaroori)
-    user_id       = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    name             = Column(String(200), nullable=False, index=True)
+    website          = Column(String(500), default="")
+    description      = Column(Text,        default="")
+    one_liner        = Column(String(300), default="")
+    funding          = Column(String(100), default="")
+    team_size        = Column(String(50),  default="")
+    location         = Column(String(150), default="")
+    source           = Column(String(80),  default="")
 
-    # Basic Info
-    name          = Column(String(200), nullable=False)
-    website       = Column(String(300), unique=True)
-    one_liner     = Column(String(300))  # Short tagline
-    description   = Column(Text)         # What they build
-    tech_stack    = Column(Text)         # JSON string
-    funding       = Column(String(100))  # "YC S23", "Series A"
-    team_size     = Column(String(50))   # "1-10", "11-50"
-    location      = Column(String(200))
-    source        = Column(String(100))  # "yc_api", "producthunt", "feed"
+    ai_hook          = Column(String(500), default="")
+    recent_highlight = Column(String(500), default="")
+    tech_stack       = Column(Text,        default="[]")
 
-    # Research Agent bharega
-    ai_related       = Column(Boolean, default=False)
-    recent_news      = Column(Text)
-    recent_highlight = Column(String(500))  # feed_to_db ke liye
-    ai_hook          = Column(String(500))  # feed_to_db ke liye
-    company_summary  = Column(Text)         # Groq se generated
-    research_done    = Column(Boolean, default=False)
+    github_url       = Column(String(300), default="")
+    github_stars     = Column(Integer,     default=0)
 
-    scraped_date  = Column(DateTime, default=datetime.utcnow)
+    contacts_json    = Column(Text,        default="[]")
+
+    feed_added_at    = Column(String(50),  default="")
+    contacted_at     = Column(String(50),  nullable=True)
 
     # Relationships
-    contacts      = relationship("Contact",     back_populates="company")
-    applications  = relationship("Application", back_populates="company")
+    contacts     = relationship("Contact",     back_populates="company", cascade="all, delete-orphan")
+    applications = relationship("Application", back_populates="company")  # ← add this

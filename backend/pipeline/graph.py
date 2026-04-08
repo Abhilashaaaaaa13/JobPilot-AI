@@ -6,7 +6,7 @@ from backend.pipeline.state    import TrackBState
 from backend.pipeline.nodes    import (
     scrape_companies_node,
     research_companies_node,
-    optimize_resumes_b_node,
+    
     generate_emails_node,
     send_emails_node,
 )

@@ -11,12 +11,12 @@ from backend.agents import (
     email_generator,
 )
 from backend.agents.email_sender   import send_and_log
-from backend.agents.research_agent import research_company
+from backend.agents.research_agent import research_agent as research_company
 
 
-# ═════════════════════════════════════════════
+
 # TRACK B NODES
-# ═════════════════════════════════════════════
+
 
 def scrape_companies_node(state: TrackBState) -> dict:
     """
