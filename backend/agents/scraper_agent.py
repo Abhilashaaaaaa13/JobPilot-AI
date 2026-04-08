@@ -150,11 +150,7 @@ def find_best_email(name: str, domain: str) -> dict:
     email = f"{first}.{last}@{domain}" if (last and last != first) else f"{first}@{domain}"
     return {"email": email, "verified": False, "source": "pattern"}
 
-
-# ═════════════════════════════════════════════
 # SOURCE 1 — YC API
-# ═════════════════════════════════════════════
-
 def get_yc_founders(slug: str) -> list:
     try:
         url = f"https://www.ycombinator.com/companies/{slug}"
@@ -237,9 +233,7 @@ def stream_yc_companies(prefs: dict) -> Generator:
         logger.error(f"YC Companies error: {e}")
 
 
-# ═════════════════════════════════════════════
 # SOURCE 2 — BETALIST
-# ═════════════════════════════════════════════
 
 async def _scrape_betalist_async(prefs: dict) -> list:
     results      = []
@@ -350,14 +344,14 @@ def _run_betalist(prefs: dict) -> list:
         loop.close()
 
 
-# ═════════════════════════════════════════════
+
 # SOURCE 3 — PRODUCT HUNT (free tier)
-# ═════════════════════════════════════════════
+
 
 def _run_product_hunt(prefs: dict = None, limit: int = 20) -> list:
     """
     Product Hunt GraphQL API — token chahiye (free tier available).
-    Token nahi? Skip silently.
+    
     """
     if not PRODUCT_HUNT_TOKEN:
         logger.info("  Product Hunt token nahi hai — skipping")
@@ -432,15 +426,15 @@ def _run_product_hunt(prefs: dict = None, limit: int = 20) -> list:
     return companies
 
 
-# ═════════════════════════════════════════════
+
 # SOURCE 4 — INDIE HACKERS (free, no auth)
 # Bootstrapped founders — direct contact info milti hai
-# ═════════════════════════════════════════════
+
 
 def _run_indie_hackers(prefs: dict = None) -> list:
     """
-    Indie Hackers products page scrape karo.
-    Bootstrapped founders milte hain — great for cold outreach.
+    Scrape IndieHackers page.
+    Bootstrapped founders are found+ — great for cold outreach.
     No auth needed.
     """
     companies = []
@@ -559,10 +553,10 @@ def _fetch_ih_product_page(url: str) -> tuple:
         return "", ""
 
 
-# ═════════════════════════════════════════════
+
 # SOURCE 5 — GITHUB TRENDING (free, no auth)
 # Tech companies jo actively build kar rahe hain
-# ═════════════════════════════════════════════
+
 
 def _run_github_trending(prefs: dict = None) -> list:
     """
@@ -708,10 +702,10 @@ def _get_github_org_contacts(org: str, website: str) -> list:
     return contacts
 
 
-# ═════════════════════════════════════════════
+
 # SOURCE 6 — HACKER NEWS "WHO IS HIRING" (free)
 # Monthly thread — active companies hiring right now
-# ═════════════════════════════════════════════
+
 
 def _run_hn_hiring(prefs: dict = None) -> list:
     """
@@ -839,9 +833,9 @@ def _run_hn_hiring(prefs: dict = None) -> list:
     return companies
 
 
-# ═════════════════════════════════════════════
+
 # RUNNER WRAPPERS
-# ═════════════════════════════════════════════
+
 
 def _run_yc(prefs: dict) -> list:
     return list(stream_yc_companies(prefs))
@@ -850,9 +844,9 @@ def stream_betalist(prefs: dict) -> Generator:
     yield from _run_betalist(prefs)
 
 
-# ═════════════════════════════════════════════
+
 # AGENT — PARALLEL SCRAPING + FALLBACK
-# ═════════════════════════════════════════════
+
 
 def scraper_agent(prefs: dict) -> list:
     """
