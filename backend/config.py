@@ -6,7 +6,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Database ──────────────────────────────────
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///data/jobs.db")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "..", "jobs.db")
+
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    f"sqlite:///{DB_PATH}"
+)
 
 # ── LLM ───────────────────────────────────────
 GROQ_API_KEY    = os.getenv("GROQ_API_KEY")
