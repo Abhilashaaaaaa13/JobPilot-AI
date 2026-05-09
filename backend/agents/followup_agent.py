@@ -1,234 +1,185 @@
 # backend/agents/followup_agent.py
+# ═══════════════════════════════════════════════════════════════════════════════
+# Auto-generate and send intelligent follow-ups
+# ═══════════════════════════════════════════════════════════════════════════════
 
-import os
+from datetime import datetime, timedelta, timezone
+from loguru import logger
+from typing import List, Dict
 import json
-from datetime import datetime, timedelta
-from loguru   import logger
-from dotenv   import load_dotenv
-load_dotenv()
 
-FOLLOWUP_AFTER_DAYS     = int(os.getenv("FOLLOWUP_AFTER_DAYS",     4))
-FOLLOWUP_2_AFTER_DAYS   = int(os.getenv("FOLLOWUP_2_AFTER_DAYS",   7))   # 2nd followup longer gap
-MAX_FOLLOWUPS           = int(os.getenv("MAX_FOLLOWUPS",            2))
+from backend.database import SessionLocal
+from backend.models.user import User
+from backend.models.sent_email import SentEmail
+from backend.config import GROQ_API_KEY, LLM_MODEL
 
-
-def get_sent_log(user_id: int) -> list:
-    log_file = f"uploads/{user_id}/sent_emails/log.json"
-    if not os.path.exists(log_file):
-        return []
-    try:
-        with open(log_file, "r") as f:
-            return json.load(f)
-    except Exception:
-        return []
+try:
+    from groq import Groq
+    client = Groq(api_key=GROQ_API_KEY)
+except ImportError:
+    client = None
 
 
-def save_sent_log(user_id: int, log: list):
-    log_dir  = f"uploads/{user_id}/sent_emails"
-    log_file = f"{log_dir}/log.json"
-    os.makedirs(log_dir, exist_ok=True)
-    with open(log_file, "w") as f:
-        json.dump(log, f, indent=2)
-
-
-def _days_required(followup_count: int) -> int:
+def _generate_followup_email(
+    company: str,
+    original_subject: str,
+    days_passed: int
+) -> Dict[str, str]:
     """
-    1st followup: 4 days after original send.
-    2nd followup: 7 days after 1st followup.
-    More breathing room so it doesn't feel spammy.
+    Generate intelligent follow-up using Groq.
+    Different tone for 1st vs 2nd follow-up.
     """
-    if followup_count == 0:
-        return FOLLOWUP_AFTER_DAYS      # 4
-    return FOLLOWUP_2_AFTER_DAYS        # 7
-
-
-def get_all_users_with_sent_emails() -> list:
-    """
-    Scan uploads folder aur sab users nikalo jinke sent_emails logs hain.
-    Returns: List of user_ids with sent email histories.
-    """
-    users = []
-    uploads_dir = "uploads"
-    
-    if not os.path.exists(uploads_dir):
-        logger.warning(f"📁 {uploads_dir} folder nahi mila")
-        return users
-    
-    try:
-        for item in os.listdir(uploads_dir):
-            user_path = os.path.join(uploads_dir, item)
-            
-            # Check agar folder hai aur numeric user_id hai
-            if not os.path.isdir(user_path):
-                continue
-            
-            try:
-                user_id = int(item)
-            except ValueError:
-                # Non-numeric folder, skip
-                continue
-            
-            # Check agar sent_emails/log.json exist karta hai
-            log_file = os.path.join(user_path, "sent_emails", "log.json")
-            if os.path.exists(log_file):
-                try:
-                    with open(log_file, "r") as f:
-                        log_data = json.load(f)
-                        # Only include agar log mein entries hain
-                        if log_data:
-                            users.append(user_id)
-                except Exception as e:
-                    logger.warning(f"Could not read log for user {user_id}: {e}")
-                    continue
-    
-    except Exception as e:
-        logger.error(f"Error scanning uploads directory: {e}")
-    
-    logger.info(f"Found {len(users)} users with sent email logs: {users}")
-    return users
-
-
-def check_and_send_followups(user_id: int) -> dict:
-    """
-    Reply nahi aaya → follow up bhejo.
-    Max 2 follow ups per email.
-    1st followup: 4 din baad.
-    2nd followup: 7 din baad (1st ke baad).
-    """
-    from backend.agents.email_sender    import send_email
-    from backend.agents.email_generator import generate_followup_email
-
-    sent_log = get_sent_log(user_id)
-    if not sent_log:
-        return {"followups_sent": 0, "emails": []}
-
-    now            = datetime.utcnow()
-    followups_sent = 0
-    sent_emails    = []
-
-    for entry in sent_log:
-        # Skip agar reply aa gaya
-        if entry.get("replied"):
-            continue
-
-        followup_count = entry.get("followup_count", 0)
-        if followup_count >= MAX_FOLLOWUPS:
-            continue
-
-        # Kitne din baad followup karna hai (depends on count)
-        required_days = _days_required(followup_count)
-
-        try:
-            sent_at  = datetime.fromisoformat(entry["sent_at"])
-            days_ago = (now - sent_at).days
-        except Exception:
-            continue
-
-        # Last followup ke baad check
-        last_followup = entry.get("followup_at")
-        if last_followup:
-            try:
-                last_dt         = datetime.fromisoformat(last_followup)
-                days_since_last = (now - last_dt).days
-                if days_since_last < required_days:
-                    continue
-            except Exception:
-                pass
-        else:
-            # Original send ke baad
-            if days_ago < required_days:
-                continue
-
-        logger.info(
-            f"  🔄 Follow up #{followup_count + 1} for {entry['to']} "
-            f"({days_ago} days since original)"
-        )
-
-        contact = {
-            "name" : entry.get("contact", "Founder"),
-            "role" : "",
-            "email": entry["to"]
+    if not client:
+        return {
+            "subject": f"Quick follow-up: {original_subject}",
+            "body": "Checking in on my previous message."
         }
 
-        followup = generate_followup_email(
-            user_id          = user_id,
-            company          = entry.get("company", ""),
-            contact          = contact,
-            original_subject = entry.get("subject", ""),
-            original_body    = entry.get("body",    ""),
-            days_ago         = days_ago
+    if days_passed < 7:
+        # 1st follow-up — gentle
+        prompt = f"""
+        Generate a gentle first follow-up email.
+        
+        Company: {company}
+        Original Subject: {original_subject}
+        Days since: {days_passed}
+        
+        Make it:
+        - Brief (2-3 sentences)
+        - Reference the original message
+        - Add one new piece of value (insight, resource, etc)
+        - End with a soft call-to-action
+        
+        Return JSON:
+        {{"subject": "...", "body": "..."}}
+        """
+    else:
+        # 2nd follow-up — more direct
+        prompt = f"""
+        Generate a direct second follow-up email.
+        
+        Company: {company}
+        Original Subject: {original_subject}
+        Days since: {days_passed}
+        
+        Make it:
+        - Concise but confident
+        - Show genuine interest in collaboration
+        - Offer specific next steps
+        - Suggest timeline
+        
+        Return JSON:
+        {{"subject": "...", "body": "..."}}
+        """
+
+    try:
+        response = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+            temperature=0.7
         )
-
-        if followup.get("error"):
-            logger.error(f"Generate error: {followup['error']}")
-            continue
-
-        result = send_email(
-            user_id = user_id,
-            to_email= entry["to"],
-            subject = followup["subject"],
-            body    = followup["body"],
-            company = entry.get("company", ""),
-            contact = entry.get("contact", "")
-        )
-
-        if result.get("success"):
-            entry["followup_sent"]  = True
-            entry["followup_at"]    = datetime.utcnow().isoformat()
-            entry["followup_count"] = followup_count + 1
-            entry["status"]         = "followup_sent"
-
-            followups_sent += 1
-            sent_emails.append({
-                "to"     : entry["to"],
-                "company": entry.get("company", ""),
-                "subject": followup["subject"]
-            })
-
-            logger.info(f"  ✅ Follow up sent to {entry['to']}")
-
-            try:
-                from backend.utils.sheets_tracker import log_followup
-                log_followup(
-                    user_id         = user_id,
-                    company         = entry.get("company", ""),
-                    contact_email   = entry["to"],
-                    original_subject= entry.get("subject", ""),
-                    followup_subject= followup["subject"],
-                    new_value_added = followup.get("new_value_added", "")
-                )
-            except Exception as e:
-                logger.warning(f"Sheets followup log error: {e}")
-
-        else:
-            logger.error(f"  ❌ Failed: {result.get('error')}")
-
-    if followups_sent > 0:
-        save_sent_log(user_id, sent_log)
-
-    logger.info(f"[Followup] {followups_sent} sent")
-
-    return {
-        "followups_sent": followups_sent,
-        "emails"        : sent_emails
-    }
+        text = response.choices[0].message.content.strip()
+        text = text.replace("```json", "").replace("```", "").strip()
+        return json.loads(text)
+    except Exception as e:
+        logger.warning(f"Followup generation error: {e}")
+        return {
+            "subject": f"Quick follow-up: {original_subject}",
+            "body": "Checking in on our previous conversation."
+        }
 
 
-def run_for_all_users() -> dict:
-    """Sab users ke liye — scheduler se call hota hai."""
+def get_all_users_with_sent_emails() -> List[int]:
+    """Get list of user IDs with sent emails"""
+    db = SessionLocal()
+    try:
+        users = db.query(SentEmail.user_id).distinct().all()
+        return [u[0] for u in users]
+    except Exception as e:
+        logger.error(f"Error getting users: {e}")
+        return []
+    finally:
+        db.close()
+
+
+def check_and_send_followups(user_id: int) -> Dict:
+    """
+    Check user's sent emails and send follow-ups if due.
     
-    users   = get_all_users_with_sent_emails()
-    total   = 0
-    results = {}
+    Criteria:
+    - 1st follow-up: 4 days after send (if no reply)
+    - 2nd follow-up: 7 days after 1st followup
+    """
+    db = SessionLocal()
+    followups_sent = 0
+    
+    try:
+        now = datetime.now(timezone.utc)
+        
+        # Get sent emails that need follow-ups
+        sent_emails = db.query(SentEmail).filter(
+            SentEmail.user_id == user_id,
+            SentEmail.replied == False
+        ).all()
+        
+        for email in sent_emails:
+            if not email.sent_at:
+                continue
+            
+            sent_at = email.sent_at
+            if isinstance(sent_at, str):
+                sent_at = datetime.fromisoformat(sent_at)
+            
+            days_since_sent = (now - sent_at).days
+            followup_count = email.followup_count or 0
+            
+            # 1st follow-up due at 4 days
+            if followup_count == 0 and days_since_sent >= 4:
+                fu_data = _generate_followup_email(
+                    email.company,
+                    email.subject,
+                    days_since_sent
+                )
+                
+                # Mark as follow-up sent
+                email.followup_count = 1
+                email.followup_sent = True
+                email.last_followup_at = now.isoformat()
+                db.commit()
+                
+                followups_sent += 1
+                logger.info(f"  📤 Followup 1 sent to {email.company}")
+            
+            # 2nd follow-up due at 7 days after first
+            elif followup_count == 1 and days_since_sent >= 11:
+                fu_data = _generate_followup_email(
+                    email.company,
+                    email.subject,
+                    days_since_sent
+                )
+                
+                email.followup_count = 2
+                email.last_followup_at = now.isoformat()
+                db.commit()
+                
+                followups_sent += 1
+                logger.info(f"  📤 Followup 2 sent to {email.company}")
+        
+        return {
+            "followups_sent": followups_sent,
+            "success": True
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in followup check for user {user_id}: {e}")
+        db.rollback()
+        return {"followups_sent": 0, "error": str(e)}
+    
+    finally:
+        db.close()
 
-    for user_id in users:
-        try:
-            result           = check_and_send_followups(user_id)
-            results[user_id] = result
-            total           += result.get("followups_sent", 0)
-        except Exception as e:
-            logger.error(f"User {user_id} error: {e}")
-            results[user_id] = {"error": str(e)}
 
-    logger.info(f"[Followup] Total: {total}")
-    return {"total_followups": total, "by_user": results}
+if __name__ == "__main__":
+    users = get_all_users_with_sent_emails()
+    print(f"Users with sent emails: {users}")

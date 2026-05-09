@@ -70,6 +70,21 @@ def save_feed_company_to_db(user_id: int, company: dict) -> tuple:
 
 
 # ─────────────────────────────────────────────
+# BULK INSERT
+# ─────────────────────────────────────────────
+
+def save_companies_bulk(user_id: int, companies: list) -> int:
+    """Save multiple companies to DB. Return count of NEW companies added."""
+    added = 0
+    for company in companies:
+        obj, co_id = save_feed_company_to_db(user_id, company)
+        if obj and co_id and co_id > 0:
+            added += 1
+    logger.info(f"Bulk save: {added} new companies added out of {len(companies)}")
+    return added
+
+
+# ─────────────────────────────────────────────
 # LOAD UNCONTACTED (for UI)
 # ─────────────────────────────────────────────
 
@@ -79,7 +94,7 @@ def load_feed_companies(user_id: int, limit: int = 60) -> list:
     try:
         rows = (
             db.query(Company)
-            .filter(Company.user_id == user_id, Company.contacted_at == None)  # noqa
+            .filter(Company.user_id == user_id, Company.contacted_at == None)
             .order_by(Company.feed_added_at.desc())
             .limit(limit)
             .all()
@@ -93,10 +108,14 @@ def load_feed_companies(user_id: int, limit: int = 60) -> list:
 
 
 def _row_to_dict(row) -> dict:
-    try:    contacts   = json.loads(row.contacts_json or "[]")
-    except: contacts   = []
-    try:    tech_stack = json.loads(row.tech_stack or "[]")
-    except: tech_stack = []
+    try:
+        contacts = json.loads(row.contacts_json or "[]")
+    except:
+        contacts = []
+    try:
+        tech_stack = json.loads(row.tech_stack or "[]")
+    except:
+        tech_stack = []
     return {
         "id"              : row.id,
         "name"            : row.name or "",

@@ -1,217 +1,131 @@
 # backend/agents/feed_agent.py
-#
-# Global "New Startups" feed.
-# Sources: YC + Betalist + Product Hunt + Indie Hackers + GitHub Trending + HN Hiring
-# Scheduler se har 24 ghante call hota hai.
-# Frontend data/company_feed.json read karta hai.
+# ═══════════════════════════════════════════════════════════════════════════════
+# Feed management — refresh, cache, and persist company data
+# ═══════════════════════════════════════════════════════════════════════════════
 
-import re
 import json
 import os
-import requests as req
 from datetime import datetime, timezone
-from loguru   import logger
+from loguru import logger
+from typing import List, Dict
 
-FEED_PATH     = os.path.join("data", "company_feed.json")
-MAX_COMPANIES = 200
-
-_FEED_PREFS = {
-    "domains"     : ["ai_ml", "data_science", "software", "full_stack", "backend"],
-    "target_roles": [
-        "engineer", "developer", "data scientist",
-        "ml engineer", "ai engineer", "backend", "full stack"
-    ],
-    "location": "remote"
-}
+from backend.database import SessionLocal
+from backend.models.company import Company
+from backend.utils.feed_to_db import save_companies_bulk, sync_feed_json
 
 
-# ─────────────────────────────────────────────
-# TEXT CLEANER
-# ─────────────────────────────────────────────
+def get_feed(limit: int = 100) -> Dict:
+    """
+    Get cached feed from data/company_feed.json.
+    Falls back to empty if not available.
+    """
+    feed_path = "data/company_feed.json"
+    
+    if os.path.exists(feed_path):
+        try:
+            with open(feed_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                companies = data.get("companies", [])[:limit]
+                return {
+                    "companies": companies,
+                    "last_updated": data.get("last_updated", ""),
+                    "total": len(companies)
+                }
+        except Exception as e:
+            logger.warning(f"Could not load feed cache: {e}")
+    
+    return {"companies": [], "last_updated": "", "total": 0}
 
-def _fix_encoding(s: str) -> str:
-    if not s or not isinstance(s, str):
-        return s
+
+def refresh_feed() -> Dict:
+    """
+    Refresh global company feed from all sources.
+    
+    Called by:
+    - Scheduler daily
+    - Frontend "Refresh Feed" button
+    - Feed agent job
+    
+    Returns: {"total": int, "new": int, "companies": list}
+    """
+    logger.info("🔄 Starting feed refresh...")
+    
     try:
-        return s.encode("latin-1").decode("utf-8")
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        return s
-
-
-def _clean_str(s: str) -> str:
-    if not s or not isinstance(s, str):
-        return s
-    s = _fix_encoding(s)
-    s = re.sub(r'\s+', ' ', s).strip()
-    return s
-
-
-def _clean_company(company: dict) -> dict:
-    text_fields = [
-        "name", "one_liner", "description", "company_summary",
-        "recent_highlight", "ai_hook", "location", "funding", "team_size"
-    ]
-    cleaned = dict(company)
-    for field in text_fields:
-        if field in cleaned:
-            cleaned[field] = _clean_str(cleaned[field])
-    if cleaned.get("contacts"):
-        clean_contacts = []
-        for c in cleaned["contacts"]:
-            cc = dict(c)
-            for f in ["name", "role", "email"]:
-                if f in cc:
-                    cc[f] = _clean_str(cc[f])
-            clean_contacts.append(cc)
-        cleaned["contacts"] = clean_contacts
-    return cleaned
-
-
-# ─────────────────────────────────────────────
-# READ / WRITE
-# ─────────────────────────────────────────────
-
-def _load_feed() -> dict:
-    os.makedirs("data", exist_ok=True)
-    if not os.path.exists(FEED_PATH):
-        return {"companies": [], "last_updated": None}
-    try:
-        with open(FEED_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Feed load error: {e}")
-        return {"companies": [], "last_updated": None}
-
-
-def _save_feed(data: dict):
-    os.makedirs("data", exist_ok=True)
-    try:
-        with open(FEED_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        logger.info(f"  Feed saved -> {FEED_PATH}")
-    except Exception as e:
-        logger.error(f"Feed save error: {e}")
-
-
-def _deduplicate(existing: list, fresh: list) -> list:
-    seen_websites = {c.get("website", "").lower() for c in existing if c.get("website")}
-    seen_names    = {c.get("name",    "").lower() for c in existing if c.get("name")}
-    new_entries   = []
-    for company in fresh:
-        website = company.get("website", "").lower()
-        name    = company.get("name",    "").lower()
-        if website and website in seen_websites:
-            continue
-        if name and name in seen_names:
-            continue
-        new_entries.append(company)
-        seen_websites.add(website)
-        seen_names.add(name)
-    merged = new_entries + existing
-    return merged[:MAX_COMPANIES]
-
-
-# ─────────────────────────────────────────────
-# ENRICH (tab karo jab user select kare — not in bulk)
-# ─────────────────────────────────────────────
-
-def _enrich_company(company: dict) -> dict:
-    try:
-        from backend.agents.research_agent import research_agent
-        research = research_agent(
-            company_name = company["name"],
-            website      = company.get("website", ""),
-            description  = company.get("description", "")
-        )
-        return {
-            **company,
-            "company_summary" : research.get("company_summary",  company.get("description", "")),
-            "recent_highlight": research.get("recent_highlight", ""),
-            "ai_hook"         : research.get("ai_hook",          ""),
-            "tech_stack"      : research.get("tech_stack",       []),
-            "ai_related"      : research.get("ai_related",       False),
-            # website update karo agar research agent ne dhundha
-            "website"         : research.get("website",          company.get("website", "")),
+        from backend.agents.scraper_agent import scraper_agent
+        
+        prefs = {
+            "domains": ["ai_ml", "saas", "developer_tools"],
+            "target_roles": ["founder", "ceo", "engineer", "ai engineer"],
+            "location": "remote"
         }
+        
+        # Scrape all sources
+        companies = scraper_agent(prefs)
+        
+        if not companies:
+            logger.warning("⚠️ No companies scraped — using cached feed")
+            return get_feed()
+        
+        logger.info(f"✅ Scraped {len(companies)} companies from sources")
+        
+        # Save to DB for ALL users (or default user)
+        # Using user_id = 0 for global feed
+        user_id = 0
+        
+        db = SessionLocal()
+        try:
+            # Get existing count before
+            existing = db.query(Company).filter(Company.user_id == user_id).count()
+            
+            # Save bulk
+            added = save_companies_bulk(user_id, companies)
+            
+            # Sync to JSON cache
+            sync_feed_json(user_id)
+            
+            logger.info(f"✅ Feed refresh complete: {added} new companies added")
+            
+            return {
+                "total": len(companies),
+                "new": added,
+                "companies": companies,
+                "success": True
+            }
+        
+        finally:
+            db.close()
+    
     except Exception as e:
-        logger.warning(f"Enrich error {company.get('name')}: {e}")
-        return company
+        logger.error(f"❌ Feed refresh error: {e}", exc_info=True)
+        
+        # Return cached feed on error
+        cached = get_feed()
+        return {
+            "total": cached["total"],
+            "new": 0,
+            "error": str(e),
+            "companies": cached["companies"]
+        }
 
 
-# ─────────────────────────────────────────────
-# MAIN — Feed Refresh
-# ─────────────────────────────────────────────
+def get_user_feed(user_id: int, limit: int = 60) -> List[Dict]:
+    """Get uncontacted companies from user's feed"""
+    from backend.utils.feed_to_db import load_feed_companies
+    return load_feed_companies(user_id, limit)
 
-def refresh_feed(enrich: bool = False) -> dict:
-    """
-    Sab sources se fresh companies fetch karo.
-    scraper_agent already sab sources handle karta hai parallel mein.
-    enrich=True sirf background scheduler use kare — user flow mein nahi.
-    """
-    logger.info("Refreshing global company feed...")
 
-    from backend.agents.scraper_agent import scraper_agent
-
+def mark_contacted(user_id: int, company_id: int) -> bool:
+    """Mark a company as contacted"""
+    from backend.utils.feed_to_db import mark_company_contacted
+    
     try:
-        fresh = scraper_agent(_FEED_PREFS)
-        logger.info(f"  Scraped (all sources): {len(fresh)} companies")
+        mark_company_contacted(user_id, company_id)
+        return True
     except Exception as e:
-        logger.error(f"Scrape error: {e}")
-        fresh = []
-
-    logger.info(f"  Total fresh: {len(fresh)} companies")
-
-    # Enrich — sirf background mein, user flow mein nahi (latency avoid)
-    if enrich and fresh:
-        logger.info("  Enriching companies (background)...")
-        fresh = [_enrich_company(c) for c in fresh]
-
-    # Clean all text fields
-    fresh = [_clean_company(c) for c in fresh]
-
-    now = datetime.now(timezone.utc).isoformat()
-    for company in fresh:
-        company["scraped_at"] = now
-
-    existing_data = _load_feed()
-    existing      = existing_data.get("companies", [])
-    merged        = _deduplicate(existing, fresh)
-    new_count     = max(0, len(merged) - len(existing))
-
-    _save_feed({
-        "companies"   : merged,
-        "last_updated": now,
-        "total"       : len(merged),
-    })
-
-    logger.info(f"  Feed updated — {len(merged)} total, {new_count} new")
-
-    return {
-        "total"       : len(merged),
-        "new"         : new_count,
-        "last_updated": now,
-    }
-
-
-def get_feed(limit: int = 50, offset: int = 0) -> dict:
-    data      = _load_feed()
-    companies = data.get("companies", [])
-    return {
-        "companies"   : companies[offset: offset + limit],
-        "total"       : len(companies),
-        "last_updated": data.get("last_updated"),
-        "has_more"    : (offset + limit) < len(companies),
-    }
-
-
-def get_feed_stats() -> dict:
-    data = _load_feed()
-    return {
-        "total"       : len(data.get("companies", [])),
-        "last_updated": data.get("last_updated"),
-    }
+        logger.error(f"Error marking company contacted: {e}")
+        return False
 
 
 if __name__ == "__main__":
     result = refresh_feed()
-    logger.info(f"Done: {result}")
+    print(f"Feed refreshed: {result['new']} new companies")
