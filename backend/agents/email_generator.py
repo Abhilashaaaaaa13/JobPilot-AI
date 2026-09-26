@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 client    = Groq(api_key=os.getenv("GROQ_API_KEY"))
-LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
 
 PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "prompts")
 
@@ -37,7 +37,7 @@ def _clean_email_address(raw: str) -> str:
 
 
 def _get_resume_path_from_db(user_id: int) -> str:
-    """DB se user ka resume path fetch karo."""
+    """Fetch the user's resume path from the DB."""
     try:
         from backend.database    import SessionLocal
         from backend.models.user import UserProfile
@@ -54,7 +54,7 @@ def _get_resume_path_from_db(user_id: int) -> str:
     except Exception as e:
         logger.warning(f"DB resume path fetch error: {e}")
 
-    # Fallback — common paths try karo
+    # Fallback — try common paths
     for path in [
         f"uploads/{user_id}/resume_base.pdf",
         f"uploads/{user_id}/resume.pdf",
@@ -67,7 +67,7 @@ def _get_resume_path_from_db(user_id: int) -> str:
 
 
 def get_user_info(user_id: int) -> dict:
-    """Resume se name/skills/key_project extract karo via Groq."""
+    """Extract name/skills/key_project from the resume via Groq."""
     resume_path = _get_resume_path_from_db(user_id)
 
     _default = {
@@ -111,8 +111,9 @@ def get_user_info(user_id: int) -> dict:
                     "content": f"Resume:\n{resume_text[:2500]}"
                 }
             ],
-            max_tokens  = 300,
+            max_tokens  = 500,
             temperature = 0.1,
+            reasoning_effort = "low",
         )
         raw    = res.choices[0].message.content.strip()
         parsed = _parse(raw)
@@ -238,6 +239,7 @@ def call_groq(prompt: str, max_tokens: int = 800) -> dict:
                 ],
                 max_tokens  = max_tokens,
                 temperature = temp,
+                reasoning_effort = "low",
             )
             raw = res.choices[0].message.content.strip()
             logger.debug(f"Groq attempt {attempt} raw ({len(raw)} chars): {raw[:120]}...")
@@ -358,7 +360,7 @@ def generate_followup_email(
         original_proposal= original_body[:200],
     )
 
-    result = call_groq(prompt, max_tokens=400)
+    result = call_groq(prompt, max_tokens=600)
     if not result:
         return {"error": "Followup generation failed after 3 attempts"}
 

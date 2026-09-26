@@ -20,7 +20,7 @@ from backend.agents.research_agent import research_agent as research_company
 
 def scrape_companies_node(state: TrackBState) -> dict:
     """
-    Fresh scrape — sari companies.
+    Fresh scrape — all companies.
     No DB — directly return.
     """
     logger.info(f"[Scrape Companies] user {state['user_id']}")
@@ -50,8 +50,8 @@ def scrape_companies_node(state: TrackBState) -> dict:
 
 def research_companies_node(state: TrackBState) -> dict:
     """
-    Selected companies ko research karo — website scrape,
-    news search, Groq summary — taaki email personalized ho.
+    Research the selected companies — website scrape,
+    news search, Groq summary — so the email can be personalized.
     """
     logger.info("[Research] Starting")
 
@@ -96,12 +96,12 @@ def research_companies_node(state: TrackBState) -> dict:
 
 def generate_emails_node(state: TrackBState) -> dict:
     """
-    Cold emails generate karo.
-    Resume path DB se seedha liya jata hai — no optimization step.
+    Generate cold emails.
+    The resume path is taken directly from the DB — no optimization step.
     """
     logger.info("[Email Gen] Starting")
 
-    # Resume path — DB se original resume lo
+    # Resume path — get the original resume from the DB
     from backend.database import SessionLocal
     from backend.models.user import UserProfile
 
@@ -177,7 +177,7 @@ def generate_emails_node(state: TrackBState) -> dict:
 
 def send_emails_node(state: TrackBState) -> dict:
     """
-    Approved emails bhejo.
+    Send the approved emails.
     """
     logger.info("[Send Emails] Starting")
 

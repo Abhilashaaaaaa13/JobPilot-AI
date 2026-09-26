@@ -3,13 +3,14 @@
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import json
 import streamlit as st
 from datetime import datetime
 
 if "user_id" not in st.session_state:
-    st.warning("LOGIN First")
+    st.warning("Please log in first")
     st.stop()
 
 user_id = st.session_state["user_id"]
@@ -17,34 +18,12 @@ user_id = st.session_state["user_id"]
 # ─────────────────────────────────────────────
 # CSS
 # ─────────────────────────────────────────────
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
-html,body,[data-testid="stAppViewContainer"]{background:#0d0d0d!important;color:#f0f0f0!important;font-family:'DM Sans',sans-serif!important}
-[data-testid="stSidebar"]{background:#161616!important;border-right:1px solid #2a2a2a!important}
-h1,h2,h3{font-family:'Space Mono',monospace!important}
-.stButton>button{background:#e8ff47!important;color:#000!important;border:none!important;border-radius:4px!important;font-family:'Space Mono',monospace!important;font-weight:700!important;font-size:12px!important}
-.stButton>button[kind="secondary"]{background:transparent!important;color:#f0f0f0!important;border:1px solid #2a2a2a!important}
-.stExpander{border:1px solid #2a2a2a!important;border-radius:6px!important;background:#161616!important}
-.stMetric{background:#161616!important;border:1px solid #2a2a2a!important;border-radius:6px!important;padding:16px!important}
-.stMetric label{color:#666!important;font-size:11px!important;text-transform:uppercase;letter-spacing:.1em}
-[data-testid="stSidebarNav"]{display:none!important}
-.status-pill{display:inline-block;border-radius:3px;padding:2px 8px;font-size:11px;font-family:'Space Mono',monospace}
-.status-replied{background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3)}
-.status-followup{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.3)}
-.status-awaiting{background:rgba(255,255,255,.06);color:#888;border:1px solid #2a2a2a}
-</style>
-""", unsafe_allow_html=True)
+from components.theme import apply_theme
+apply_theme()
 
 # ── Sidebar ───────────────────────────────────
-with st.sidebar:
-    st.markdown('<p style="font-family:\'Space Mono\',monospace;font-size:18px;color:#e8ff47;font-weight:700">⚡ OutreachAI</p>', unsafe_allow_html=True)
-    st.markdown(f'<p style="color:#666;font-size:12px;font-family:\'Space Mono\',monospace">{st.session_state.get("email","")}</p>', unsafe_allow_html=True)
-    st.divider()
-    st.page_link("app.py",                label="⚡  Home",          use_container_width=True)
-    st.page_link("pages/2_onboarding.py", label="👤  Profile Setup", use_container_width=True)
-    st.page_link("pages/4_outreach.py",   label="🚀  Cold Outreach", use_container_width=True)
-    st.page_link("pages/5_tracker.py",    label="📊  Tracker",       use_container_width=True)
+from components.sidebar import render_sidebar
+render_sidebar()
 
 
 # ─────────────────────────────────────────────
@@ -52,22 +31,27 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 
 st.markdown("# 📊 Tracker")
-st.caption("Sent emails, replies, follow ups — Everything tracked in one place")
+st.caption("Sent emails, replies, follow ups — everything tracked in one place")
 
 # ── Scheduler Status Banner ───────────────────
-sched = st.session_state.get("scheduler")
-if sched and sched.running:
-    jobs        = {j.id: j for j in sched.get_jobs()}
-    reply_job   = jobs.get("reply_check")
-    followup_job= jobs.get("followup_check")
+from components.scheduler_control import get_scheduler, is_running, start_scheduler
+
+sched = get_scheduler()
+if is_running():
+    jobs         = {j.id: j for j in sched.get_jobs()}
+    reply_job    = jobs.get("reply_check")
+    followup_job = jobs.get("followup_check")
+    sheets_job   = jobs.get("sheets_sync")
 
     parts = []
     if reply_job and reply_job.next_run_time:
         parts.append(f"Reply check: **{reply_job.next_run_time.strftime('%H:%M')}**")
     if followup_job and followup_job.next_run_time:
         parts.append(f"Follow up: **{followup_job.next_run_time.strftime('%H:%M')}**")
+    if sheets_job and sheets_job.next_run_time:
+        parts.append(f"Sheets sync: **{sheets_job.next_run_time.strftime('%H:%M')}**")
 
-    status_line = "  ·  ".join(parts) if parts else "Jobs chal rahe hain"
+    status_line = "  ·  ".join(parts) if parts else "Jobs are running"
     st.markdown(
         f'<div style="background:rgba(74,222,128,.07);border:1px solid rgba(74,222,128,.2);'
         f'border-radius:6px;padding:8px 14px;font-size:12px;font-family:\'Space Mono\',monospace;'
@@ -77,24 +61,29 @@ if sched and sched.running:
         unsafe_allow_html=True
     )
 else:
-    err = st.session_state.get("scheduler_error", "")
-    st.markdown(
-        f'<div style="background:rgba(248,113,113,.07);border:1px solid rgba(248,113,113,.2);'
-        f'border-radius:6px;padding:8px 14px;font-size:12px;font-family:\'Space Mono\',monospace;'
-        f'color:#f87171;margin-bottom:12px">'
-        f'🔴 Scheduler OFF — auto reply/followup nahi chalega.  '
-        f'{"Error: " + err[:80] if err else "App restart karo."}'
-        f'</div>',
-        unsafe_allow_html=True
-    )
+    col_msg, col_btn = st.columns([4, 1])
+    with col_msg:
+        st.markdown(
+            '<div style="background:rgba(248,113,113,.07);border:1px solid rgba(248,113,113,.2);'
+            'border-radius:6px;padding:8px 14px;font-size:12px;font-family:\'Space Mono\',monospace;'
+            'color:#f87171;margin-bottom:12px">'
+            '🔴 Scheduler OFF — auto reply-check, follow-ups & Sheets sync will not run.'
+            '</div>',
+            unsafe_allow_html=True
+        )
+    with col_btn:
+        if st.button("▶ Start", key="tracker_sched_start", use_container_width=True, type="primary"):
+            with st.spinner("Starting scheduler..."):
+                start_scheduler()
+            st.rerun()
 
 log_file = f"uploads/{user_id}/sent_emails/log.json"
 
 if not os.path.exists(log_file):
     st.markdown("""
     <div style="border:1px dashed #2a2a2a;border-radius:8px;padding:40px;text-align:center;color:#555">
-        Abhi tak koi email nahi bheji.<br>
-        <span style="font-size:13px">Cold Outreach page pe jao aur startups ko email karo.</span>
+        No emails sent yet.<br>
+        <span style="font-size:13px">Go to the Cold Outreach page and email some startups.</span>
     </div>
     """, unsafe_allow_html=True)
     if st.button("→ Cold Outreach", type="primary"):
@@ -108,7 +97,7 @@ except Exception:
     sent_log = []
 
 if not sent_log:
-    st.info("Koi emails nahi — pehle bhejo")
+    st.info("No emails yet — send some first")
     st.stop()
 
 # ── Stats ─────────────────────────────────────
@@ -281,11 +270,11 @@ for entry in sorted_log:
                     - datetime.fromisoformat(entry["sent_at"])
                 ).days
                 if days_ago >= 4:
-                    st.warning(f"⏳ {days_ago} din — no reply. Follow up due?")
+                    st.warning(f"⏳ {days_ago} days — no reply. Follow up due?")
                 else:
                     st.markdown(
                         f'<span style="color:#666;font-size:13px">'
-                        f'{days_ago} din ho gaye</span>',
+                        f'{days_ago} days ago</span>',
                         unsafe_allow_html=True
                     )
             except Exception:

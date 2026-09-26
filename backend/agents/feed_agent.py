@@ -37,41 +37,38 @@ def get_feed(limit: int = 100) -> Dict:
     return {"companies": [], "last_updated": "", "total": 0}
 
 
-def refresh_feed() -> Dict:
+def refresh_feed(user_id: int) -> Dict:
     """
-    Refresh global company feed from all sources.
-    
+    Refresh this user's company feed from all sources (runs the 6 scrapers
+    in parallel — faster than the sequential "Find More Startups" flow).
+
     Called by:
     - Scheduler daily
     - Frontend "Refresh Feed" button
     - Feed agent job
-    
+
     Returns: {"total": int, "new": int, "companies": list}
     """
-    logger.info("🔄 Starting feed refresh...")
-    
+    logger.info(f"🔄 Starting feed refresh for user {user_id}...")
+
     try:
         from backend.agents.scraper_agent import scraper_agent
-        
+
         prefs = {
             "domains": ["ai_ml", "saas", "developer_tools"],
             "target_roles": ["founder", "ceo", "engineer", "ai engineer"],
             "location": "remote"
         }
-        
+
         # Scrape all sources
         companies = scraper_agent(prefs)
-        
+
         if not companies:
             logger.warning("⚠️ No companies scraped — using cached feed")
             return get_feed()
-        
+
         logger.info(f"✅ Scraped {len(companies)} companies from sources")
-        
-        # Save to DB for ALL users (or default user)
-        # Using user_id = 0 for global feed
-        user_id = 0
-        
+
         db = SessionLocal()
         try:
             # Get existing count before
@@ -127,5 +124,5 @@ def mark_contacted(user_id: int, company_id: int) -> bool:
 
 
 if __name__ == "__main__":
-    result = refresh_feed()
+    result = refresh_feed(user_id=1)
     print(f"Feed refreshed: {result['new']} new companies")

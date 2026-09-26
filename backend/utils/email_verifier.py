@@ -1,5 +1,5 @@
 # backend/utils/email_verifier.py
-# Email dhundho aur verify karo
+# Find and verify emails
 #
 # Priority order:
 # 1. Website scraping  → free, unlimited, fastest
@@ -8,13 +8,13 @@
 #
 # SMTP deliberately removed:
 # - Port 25 mostly blocked by ISPs / cloud hosts
-# - Catch-all servers hamesha 250 return karte hain
+# - Catch-all servers always return 250
 #   even for non-existent addresses — false positives
 # - 3-10s per check × 300 companies = pipeline hang
-# - Net gain zero — pattern guess utna hi useful hai
+# - Net gain zero — pattern guess is just as useful
 #
 # Caller: contact_finder.py (pipeline, on user selection)
-# NOT called from scraper_agent — wahan sirf fast pattern.
+# NOT called from scraper_agent — that only uses the fast pattern there.
 
 import re
 import requests as req
@@ -44,9 +44,9 @@ SKIP = [
 
 def find_emails_on_website(domain: str) -> list:
     """
-    Company website pe directly emails dhundho.
-    /contact aur /team pages best hain.
-    mailto: links bhi check karo.
+    Find emails directly on the company website.
+    /contact and /team pages are best.
+    Also check mailto: links.
     Returns list of email strings, deduped.
     """
     pages = [
@@ -106,10 +106,10 @@ def find_emails_on_website(domain: str) -> list:
 
 def hunter_lookup(domain: str) -> list:
     """
-    Hunter.io se domain ke emails lo.
+    Get emails for the domain from Hunter.io.
     Returns list of dicts with email + metadata.
     Only called when website scrape fails.
-    25 free searches/month — conserve karo.
+    25 free searches/month — use them sparingly.
     """
     if not HUNTER_API_KEY:
         return []
@@ -149,8 +149,8 @@ def hunter_lookup(domain: str) -> list:
 
 def generate_email_patterns(full_name: str, domain: str) -> list:
     """
-    Naam aur domain se possible emails banao.
-    Most common startup patterns pehle.
+    Build possible emails from the name and domain.
+    Most common startup patterns come first.
     No verification — caller decides what to do with these.
     """
     parts = full_name.lower().strip().split()

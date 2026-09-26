@@ -8,8 +8,8 @@ from backend.config import SECRET_KEY, ALGORITHM , TOKEN_EXPIRE_MIN
 
 # Bcrypt context
 # Why bcrypt?
-# → One way hash — original password recover nahi hota
-# → Slow by design — brute force difficult
+# → One-way hash — the original password cannot be recovered
+# → Slow by design — brute force is difficult
 # → Industry standard
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 

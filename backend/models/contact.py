@@ -1,8 +1,8 @@
 # backend/models/contact.py
 # Contact — CEO/CTO/HR per company
 # Why separate table?
-# Ek company ke multiple contacts ho sakte hain
-# Founder ko alag email, HR ko alag email
+# A company can have multiple contacts
+# The founder gets a different email than HR
 
 from sqlalchemy import Column, Integer, String, Float, ForeignKey
 from sqlalchemy.orm import relationship
@@ -27,7 +27,7 @@ class Contact(Base):
     # "smtp_verify" / "website" / "hunter" / "pattern_guess"
     priority = Column(Integer, default=5)
     # 1 = Founder (best), 7 = Recruiter (worst)
-    # config.py ke CONTACT_PRIORITY se set hoga
+    # Will be set from config.py's CONTACT_PRIORITY
 
     #relationship
     company = relationship("Company", back_populates="contacts")

@@ -6,3 +6,6 @@ uploads/
 data/
 credentials.json
 .session_token
+*.log
+client/node_modules/
+client/dist/

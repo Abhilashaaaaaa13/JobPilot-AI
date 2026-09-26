@@ -1,0 +1,12 @@
+venv/
+client/node_modules/
+client/dist/
+__pycache__/
+*.pyc
+.git/
+.env
+data/jobs.db
+data/company_feed.json
+uploads/
+*.log
+.session_token

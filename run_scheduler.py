@@ -1,10 +1,10 @@
 # run_scheduler.py
 # ─────────────────────────────────────────────
-# Local development ke liye alag terminal mein chalao:
+# For local development, run this in a separate terminal:
 #   python run_scheduler.py
 #
-# Yeh tab tak chalta rahega jab tak terminal band na karo.
-# Streamlit se bilkul alag hai — tab band karne se affect nahi hota.
+# This keeps running until you close the terminal.
+# It's completely separate from Streamlit — closing that tab doesn't affect it.
 # ─────────────────────────────────────────────
 
 import sys
@@ -16,7 +16,7 @@ import signal
 from loguru import logger
 from backend.database import init_db
 
-# DB initialize karo pehle
+# Initialize the DB first
 init_db()
 
 from backend.pipeline.scheduler import create_scheduler
@@ -31,7 +31,7 @@ logger.info("=" * 50)
 for job in scheduler.get_jobs():
     logger.info(f"  ⏰ {job.id}: next run at {job.next_run_time}")
 
-logger.info("Ctrl+C se band karo")
+logger.info("Press Ctrl+C to stop")
 logger.info("=" * 50)
 
 # Graceful shutdown on Ctrl+C
@@ -43,6 +43,6 @@ def _shutdown(sig, frame):
 signal.signal(signal.SIGINT,  _shutdown)
 signal.signal(signal.SIGTERM, _shutdown)
 
-# Alive rakho
+# Keep it alive
 while True:
     time.sleep(60)

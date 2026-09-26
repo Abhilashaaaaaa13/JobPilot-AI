@@ -76,8 +76,9 @@ def _generate_followup_email(
         response = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
-            temperature=0.7
+            max_tokens=450,
+            temperature=0.7,
+            reasoning_effort="low"
         )
         text = response.choices[0].message.content.strip()
         text = text.replace("```json", "").replace("```", "").strip()

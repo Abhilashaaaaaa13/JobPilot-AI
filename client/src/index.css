@@ -1,0 +1,88 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+
+@theme {
+  --font-mono: 'Space Mono', monospace;
+  --font-sans: 'DM Sans', sans-serif;
+
+  --color-bg: #0d0d0d;
+  --color-surface: #161616;
+  --color-surface-2: #1a1a1a;
+  --color-border: #2a2a2a;
+  --color-accent: #e8ff47;
+  --color-text: #f0f0f0;
+  --color-muted: #666666;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+
+.btn-primary {
+  background: var(--color-accent);
+  color: #000;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 13px;
+  border-radius: 6px;
+  padding: 10px 18px;
+  transition: all .15s;
+}
+.btn-primary:hover { background: #fff; transform: translateY(-1px); }
+.btn-primary:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 13px;
+  border-radius: 6px;
+  padding: 10px 18px;
+  transition: all .15s;
+}
+.btn-secondary:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.btn-secondary:disabled { opacity: .5; cursor: not-allowed; }
+
+.input-field {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 14px;
+  width: 100%;
+  outline: none;
+  transition: border-color .15s;
+}
+.input-field:focus { border-color: var(--color-accent); }
+.input-field::placeholder { color: #555; }
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.step-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-muted);
+  margin-bottom: 10px;
+}

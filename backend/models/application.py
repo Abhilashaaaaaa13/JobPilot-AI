@@ -24,7 +24,7 @@ class Application(Base):
     company_name = Column(String(200))   # always store name directly too
 
     # Contact — inline strings, no FK
-    # Stateless pipeline mein contacts DB mein nahi hote
+    # In the stateless pipeline, contacts are not stored in the DB
     contact_name  = Column(String(200))
     contact_role  = Column(String(100))
     contact_email = Column(String(200))

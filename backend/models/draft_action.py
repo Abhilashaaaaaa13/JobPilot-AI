@@ -15,9 +15,16 @@ class DraftAction(Base):
     subject = Column(String(300))
     body = Column(Text)
     to_email = Column(String(200))
-    
+
     status = Column(String(50), default="pending", index=True)
-    
+
+    # Which sent email this action applies to, and what the user actually did
+    # (approved / edited_and_sent / rejected / manual_reply) — used by the
+    # Replies & Drafts history tab.
+    sent_email_id = Column(Integer, ForeignKey("sent_emails.id"), nullable=True, index=True)
+    action = Column(String(50), nullable=True)
+    user_action_at = Column(DateTime, default=datetime.utcnow, index=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     approved_at = Column(DateTime, nullable=True)
     

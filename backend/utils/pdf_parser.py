@@ -101,8 +101,9 @@ Return this exact structure:
         response = client.chat.completions.create(
             model       = LLM_MODEL,
             messages    = [{"role": "user", "content": prompt}],
-            max_tokens  = 500,
-            temperature = 0.1
+            max_tokens  = 700,
+            temperature = 0.1,
+            reasoning_effort = "low"
         )
         raw = response.choices[0].message.content.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
@@ -115,7 +116,7 @@ Return this exact structure:
 def parse_resume(pdf_path: str) -> dict:
     text = extract_text_from_pdf(pdf_path)
     if not text:
-        return {"error": "PDF se text extract nahi hua"}
+        return {"error": "Could not extract text from PDF"}
 
     groq_data      = parse_resume_with_groq(text)
     keyword_skills = extract_skills_from_text(text)

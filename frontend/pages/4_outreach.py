@@ -1,6 +1,7 @@
 # frontend/pages/4_outreach.py
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import json
 import streamlit as st
 from loguru import logger
@@ -10,64 +11,13 @@ if "user_id" not in st.session_state:
 
 user_id = st.session_state["user_id"]
 
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
-html,body,[data-testid="stAppViewContainer"]{background:#0d0d0d!important;color:#f0f0f0!important;font-family:'DM Sans',sans-serif!important}
-[data-testid="stSidebar"]{background:#161616!important;border-right:1px solid #2a2a2a!important}
-h1,h2,h3{font-family:'Space Mono',monospace!important}
-.stButton>button{background:#e8ff47!important;color:#000!important;border:none!important;border-radius:4px!important;font-family:'Space Mono',monospace!important;font-weight:700!important;font-size:12px!important;transition:all .15s!important}
-.stButton>button:hover{background:#fff!important;transform:translateY(-1px)!important}
-.stButton>button[kind="secondary"]{background:transparent!important;color:#f0f0f0!important;border:1px solid #2a2a2a!important}
-.stButton>button[kind="secondary"]:hover{border-color:#e8ff47!important;color:#e8ff47!important}
-.stTextInput>div>div>input,.stTextArea>div>div>textarea{background:#161616!important;border:1px solid #2a2a2a!important;color:#f0f0f0!important}
-.stTextInput>div>div>input:focus,.stTextArea>div>div>textarea:focus{border-color:#e8ff47!important}
-.stExpander{border:1px solid #2a2a2a!important;border-radius:6px!important;background:#161616!important}
-[data-testid="stSidebarNav"]{display:none!important}
-.gap-box{background:rgba(255,107,53,.05);border-left:3px solid #ff6b35;padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px}
-.proposal-box{background:rgba(74,222,128,.05);border-left:3px solid #4ade80;padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px}
-.hook-box{background:rgba(232,255,71,.04);border:1px solid rgba(232,255,71,.15);border-radius:6px;padding:10px 14px}
-.research-box{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:12px 16px;margin:8px 0;font-size:13px}
-.desc-box{background:rgba(232,255,71,.04);border-left:2px solid rgba(232,255,71,.3);padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px;color:#ccc;margin:6px 0 10px 0;line-height:1.6}
-</style>
-""", unsafe_allow_html=True)
+from components.theme import apply_theme
+from components.formatting import short_url
+apply_theme()
 
 
-def _check_scheduler_process():
-    try:
-        import psutil
-        for p in psutil.process_iter(["cmdline"]):
-            if "run_scheduler.py" in " ".join(p.info["cmdline"] or []):
-                return True
-    except Exception: pass
-    return False
-
-with st.sidebar:
-    st.markdown("### ⚡ OutreachAI")
-    st.caption(st.session_state.get("email", ""))
-    st.divider()
-    st.page_link("app.py",                label="⚡  Home",          use_container_width=True)
-    st.page_link("pages/2_onboarding.py", label="👤  Profile Setup", use_container_width=True)
-    st.page_link("pages/4_outreach.py",   label="🚀  Cold Outreach", use_container_width=True)
-    st.page_link("pages/5_tracker.py",    label="📊  Tracker",       use_container_width=True)
-    try:
-        from backend.pipeline.reply_handler import NotificationManager
-        _p = NotificationManager.get_pending_notifications(user_id)
-        _rc = len([n for n in _p if n["type"] == "reply_received"])
-        _lbl = f"📬  Replies & Drafts  🔴 {_rc}" if _rc else "📬  Replies & Drafts"
-    except Exception:
-        _lbl = "📬  Replies & Drafts"
-    st.page_link("pages/3_replies.py", label=_lbl, use_container_width=True)
-    st.divider()
-    sc = len(st.session_state.get("sent_ids", set()))
-    if sc: st.success(f"✅ {sc} sent this session")
-    st.divider()
-    if _check_scheduler_process():
-        st.markdown('<p style="color:#4ade80;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">🟢 SCHEDULER ON</p>', unsafe_allow_html=True)
-        st.markdown('<p style="color:#555;font-size:10px;margin:2px 0">· Auto follow-ups running</p>', unsafe_allow_html=True)
-    else:
-        st.markdown('<p style="color:#f87171;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">🔴 SCHEDULER OFF</p>', unsafe_allow_html=True)
-        st.markdown('<p style="color:#555;font-size:10px;margin:2px 0">· Run: python run_scheduler.py</p>', unsafe_allow_html=True)
+from components.sidebar import render_sidebar
+render_sidebar()
 
 
 SOURCE_ICONS = {"yc_api":"🟠 YC","betalist":"🟣 BL","product_hunt":"🔴 PH",
@@ -78,25 +28,14 @@ SOURCE_ICONS = {"yc_api":"🟠 YC","betalist":"🟣 BL","product_hunt":"🔴 PH"
 # HELPERS
 # ═════════════════════════════════════════
 
-def _make_key(co_id, company):
-    name_hash = abs(hash(company.get("name", "") + str(co_id))) % 10_000_000
-    return f"{co_id}_{name_hash}"
+from components.email_actions import (
+    is_sent as _is_sent,
+    mark_sent as _mark_sent_base,
+    render_email_panel,
+)
 
 def _mark_sent(co_id):
-    if "sent_ids" not in st.session_state:
-        st.session_state["sent_ids"] = set()
-    st.session_state["sent_ids"].add(co_id)
-    if co_id in st.session_state.get("email_previews", {}):
-        st.session_state["email_previews"][co_id]["decision"] = "sent"
-    try:
-        from backend.utils.feed_to_db import mark_company_contacted
-        mark_company_contacted(user_id, co_id)
-    except Exception as e:
-        logger.warning(f"mark_company_contacted failed: {e}")
-
-def _is_sent(co_id):
-    if co_id in st.session_state.get("sent_ids", set()): return True
-    return st.session_state.get("email_previews", {}).get(co_id, {}).get("decision") == "sent"
+    _mark_sent_base(user_id, co_id)
 
 def _db_save(company: dict) -> int:
     try:
@@ -107,96 +46,27 @@ def _db_save(company: dict) -> int:
         logger.warning(f"_db_save failed: {e}")
         return id(company)
 
-def _send_email(co_id, company, ep):
-    from backend.agents.email_sender import send_email, get_gmail_creds
-    from backend.database import SessionLocal
-    from backend.models.user import UserProfile
-    creds = get_gmail_creds(user_id)
-    if "error" in creds:
-        st.error(f"❌ Gmail credentials missing: {creds['error']}"); return
-    resume_path = ""
-    db = SessionLocal()
-    try:
-        prof = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
-        if prof and prof.resume_path and os.path.exists(prof.resume_path):
-            resume_path = prof.resume_path
-    finally: db.close()
-    to_email = ep.get("contact_email","").strip()
-    subject  = ep.get("subject","").strip()
-    body     = ep.get("body","").strip()
-    if not to_email: st.error("❌ Contact email is missing."); return
-    if not subject:  st.error("❌ Subject is empty."); return
-    if not body:     st.error("❌ Email body is empty."); return
-    with st.spinner(f"Sending to {to_email}..."):
-        result = send_email(
-            user_id=user_id, to_email=to_email, subject=subject, body=body,
-            resume_path=resume_path, company=company["name"],
-            contact=ep.get("contact_name",""), contact_role=ep.get("contact_role",""),
-            gap=ep.get("gap",""), proposal=ep.get("proposal",""),
-            website=company.get("website",""),
-        )
-    if result.get("success"):
-        _mark_sent(co_id)
-        st.success(f"✅ Sent to `{to_email}` at {result.get('sent_at','')[:19]}")
-        st.toast(f"✅ Sent to {ep.get('contact_name','')} @ {company['name']}!", icon="🚀")
-    else:
-        err = result.get("error","Unknown")
-        st.error(f"❌ Send failed: {err}")
-        if "auth" in err.lower() or "password" in err.lower():
-            st.warning("🔧 Fix: Create an App Password and add it in Profile Setup.")
-
-def _generate_email(co_id, company):
-    from backend.agents.email_generator import generate_cold_email
-    if "email_previews" not in st.session_state:
-        st.session_state["email_previews"] = {}
-    if co_id in st.session_state["email_previews"]: return
-    contacts = company.get("contacts", [])
-    contact  = next((c for c in contacts if c.get("email")), None)
-    if not contact:
-        st.session_state["email_previews"][co_id] = {"error": "No contact email found"}; return
-    with st.spinner(f"Drafting email for {company['name']}..."):
-        try:
-            result = generate_cold_email(
-                user_id=user_id, company=company["name"],
-                description=company.get("company_summary") or company.get("description",""),
-                one_liner=company.get("one_liner",""), contact=contact,
-                ai_hook=company.get("ai_hook",""),
-                recent_highlight=company.get("recent_highlight",""),
-                tech_stack=company.get("tech_stack",[]),
-            )
-            if result.get("error"):
-                st.session_state["email_previews"][co_id] = {"error": result["error"]}; return
-            st.session_state["email_previews"][co_id] = {
-                "contact_name" : contact.get("name",""),
-                "contact_role" : contact.get("role",""),
-                "contact_email": contact.get("email",""),
-                "subject"      : result.get("subject",""),
-                "body"         : result.get("body",""),
-                "gap"          : result.get("gap",""),
-                "proposal"     : result.get("proposal",""),
-                "why_fits"     : result.get("why_fits",""),
-                "decision"     : None,
-            }
-        except Exception as e:
-            st.session_state["email_previews"][co_id] = {"error": str(e)}
-
 
 # ═════════════════════════════════════════
 # COMPANY CARD
 # ═════════════════════════════════════════
 
-def _render_company_card(company, co_id, expanded=False, idx=0):
-    uid = f"card_{idx}"
+def _render_company_card(company, co_id, expanded=False, idx=0, auto_draft=False):
+    uid = f"card_{co_id}"  # tied to the company, not list position, so state survives reruns/reordering
 
     contacts     = company.get("contacts", [])
     already_sent = _is_sent(co_id)
+    has_draft    = co_id in st.session_state.get("email_previews", {})
     src       = SOURCE_ICONS.get(company.get("source",""), "⚪")
     ct_str    = f"✉️ {len(contacts)}" if contacts else "⚠️ no contacts"
-    sfx       = " · ✅ Sent" if already_sent else ""
+    sfx       = " · ✅ Sent" if already_sent else (" · 📧 Drafted" if has_draft else "")
     stars_str = f" · ⭐ {company['github_stars']}" if company.get("github_stars") else ""
     header    = f"{src}  **{company['name']}** · {company.get('funding','?')} · {ct_str}{stars_str}{sfx}"
 
-    with st.expander(header, expanded=expanded):
+    # Once a card has a draft (or is sent), keep it open across reruns — otherwise
+    # clicking Edit/Save/Send inside a closed-by-default expander looks like it
+    # silently does nothing, because the expander collapses back on every rerun.
+    with st.expander(header, expanded=(expanded or has_draft or already_sent)):
         r1, r2 = st.columns(2)
         r1.metric("Team",     company.get("team_size","?"))
         r2.metric("Location", (company.get("location") or "?")[:20])
@@ -220,7 +90,8 @@ def _render_company_card(company, co_id, expanded=False, idx=0):
                 unsafe_allow_html=True
             )
 
-        if company.get("website"):    st.markdown(f"[🔗 {company['website']}]({company['website']})")
+        if company.get("website"):
+            st.markdown(f"[🔗 {short_url(company['website'])}]({company['website']})")
         if company.get("github_url"): st.markdown(f"[🐙 GitHub]({company['github_url']})")
 
         # Research insights
@@ -252,60 +123,7 @@ def _render_company_card(company, co_id, expanded=False, idx=0):
 
         st.divider()
 
-        if already_sent:
-            ep = st.session_state.get("email_previews",{}).get(co_id,{})
-            st.success("✅ Email sent — check the Tracker for details.")
-            if ep.get("subject"):       st.write(f"**Subject:** {ep['subject']}")
-            if ep.get("contact_email"): st.write(f"**To:** `{ep['contact_email']}`")
-            c1,c2 = st.columns(2)
-            with c1:
-                if ep.get("gap"):      st.markdown(f'<div class="gap-box"><b>Gap</b><br>{ep["gap"][:120]}</div>', unsafe_allow_html=True)
-            with c2:
-                if ep.get("proposal"): st.markdown(f'<div class="proposal-box"><b>Proposal</b><br>{ep["proposal"][:120]}</div>', unsafe_allow_html=True)
-            return
-
-        _generate_email(co_id, company)
-        ep = st.session_state.get("email_previews",{}).get(co_id)
-        if not ep: return
-        if ep.get("error"):              st.error(f"❌ {ep['error']}"); return
-        if ep.get("decision") == "skip": st.caption("⏭ Skipped"); return
-
-        st.markdown("### 📧 Draft Email")
-        ec1,ec2 = st.columns(2)
-        ec1.write(f"**To:** {ep.get('contact_name','')} ({ep.get('contact_role','')})")
-        ec2.write(f"**Email:** `{ep.get('contact_email','')}`")
-        g1,g2,g3 = st.columns(3)
-        with g1:
-            if ep.get("gap"):      st.markdown(f'<div class="gap-box"><b style="font-size:11px;color:#ff6b35">GAP</b><br>{ep["gap"][:100]}</div>', unsafe_allow_html=True)
-        with g2:
-            if ep.get("proposal"): st.markdown(f'<div class="proposal-box"><b style="font-size:11px;color:#4ade80">PROPOSAL</b><br>{ep["proposal"][:100]}</div>', unsafe_allow_html=True)
-        with g3:
-            if ep.get("why_fits"): st.markdown(f'<div class="hook-box"><b style="font-size:11px;color:#e8ff47">WHY YOU</b><br>{ep["why_fits"][:100]}</div>', unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        edit_key = f"editing_{uid}"
-        editing  = st.session_state.get(edit_key, False)
-        if editing:
-            ns = st.text_input("Subject", value=ep.get("subject",""), key=f"subj_{uid}")
-            nb = st.text_area("Body",     value=ep.get("body",""),    height=220, key=f"body_{uid}")
-            st.session_state["email_previews"][co_id]["subject"] = ns
-            st.session_state["email_previews"][co_id]["body"]    = nb
-        else:
-            st.text_input("Subject", value=ep.get("subject",""), disabled=True, key=f"subj_d_{uid}")
-            st.text_area("Body",     value=ep.get("body",""),    disabled=True, height=200, key=f"body_d_{uid}")
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        a1,a2,a3 = st.columns([2,1,1])
-        with a1:
-            if st.button("🚀 Send Email", key=f"send_{uid}", type="primary", use_container_width=True):
-                _send_email(co_id, company, ep)
-        with a2:
-            lbl = "💾 Save" if editing else "✏️ Edit"
-            if st.button(lbl, key=f"edit_{uid}", use_container_width=True):
-                st.session_state[edit_key] = not editing; st.rerun()
-        with a3:
-            if st.button("❌ Skip", key=f"skip_{uid}", use_container_width=True):
-                st.session_state["email_previews"][co_id]["decision"] = "skip"; st.rerun()
+        render_email_panel(user_id, co_id, company, uid=uid, auto_draft=auto_draft)
 
 
 # ═════════════════════════════════════════
@@ -356,7 +174,7 @@ if feed_company:
     else:
         st.info(f"📬 **{feed_company.get('name')}** — drafting your email...")
         st.divider()
-        _render_company_card(feed_company, co_id, expanded=True, idx=0)
+        _render_company_card(feed_company, co_id, expanded=True, idx=0, auto_draft=True)
         st.divider()
 
 # ── Find More button ──
@@ -390,6 +208,9 @@ if st.session_state.get("is_scraping"):
     cards_area = st.container()
     counts     = {"yc":0,"bl":0,"ph":0,"ih":0,"gh":0,"hn":0}
     new_cards  = []
+    errors     = {}  # src_key -> error message, shown persistently at the end
+    # (a per-source failure used to only flash in status_ph for a split second
+    # before the next source's status line overwrote it — invisible in practice)
 
     def _process(co, src_key):
         co["source"] = co.get("source") or src_key
@@ -405,37 +226,37 @@ if st.session_state.get("is_scraping"):
     try:
         for co in stream_yc_companies(prefs):
             _process(co, "yc"); status_ph.info(f"🟠 YC: {counts['yc']} new...")
-    except Exception as e: status_ph.warning(f"⚠️ YC: {e}")
+    except Exception as e: errors["yc"] = str(e)
 
     status_ph.info("🟣 Scraping Betalist...")
     try:
         for co in stream_betalist(prefs):
             _process(co, "bl"); status_ph.info(f"🟣 Betalist: {counts['bl']} new...")
-    except Exception as e: status_ph.warning(f"⚠️ Betalist: {e}")
+    except Exception as e: errors["bl"] = str(e)
 
     status_ph.info("🔴 Scraping Product Hunt...")
     try:
         for co in _run_product_hunt(prefs): _process(co, "ph")
         status_ph.info(f"🔴 PH: {counts['ph']} new")
-    except Exception as e: status_ph.warning(f"⚠️ PH: {e}")
+    except Exception as e: errors["ph"] = str(e)
 
     status_ph.info("🟢 Scraping Indie Hackers...")
     try:
         for co in _run_indie_hackers(prefs): _process(co, "ih")
         status_ph.info(f"🟢 IH: {counts['ih']} new")
-    except Exception as e: status_ph.warning(f"⚠️ IH: {e}")
+    except Exception as e: errors["ih"] = str(e)
 
     status_ph.info("⚫ Scraping GitHub Trending...")
     try:
         for co in _run_github_trending(prefs): _process(co, "gh")
         status_ph.info(f"⚫ GH: {counts['gh']} new")
-    except Exception as e: status_ph.warning(f"⚠️ GH: {e}")
+    except Exception as e: errors["gh"] = str(e)
 
     status_ph.info("🟡 Scraping HN Hiring...")
     try:
         for co in _run_hn_hiring(prefs): _process(co, "hn")
         status_ph.info(f"🟡 HN: {counts['hn']} new")
-    except Exception as e: status_ph.warning(f"⚠️ HN: {e}")
+    except Exception as e: errors["hn"] = str(e)
 
     total_new = sum(counts.values())
 
@@ -447,6 +268,10 @@ if st.session_state.get("is_scraping"):
         f"(🟠{counts['yc']} 🟣{counts['bl']} 🔴{counts['ph']} 🟢{counts['ih']} ⚫{counts['gh']} 🟡{counts['hn']})"
         + ("  · Duplicates automatically skipped" if total_new == 0 else "")
     )
+    # st.rerun() below wipes anything rendered on this run — stash errors in
+    # session_state so they can be shown persistently on the results page.
+    st.session_state["scrape_errors"] = errors
+
     st.session_state["is_scraping"]   = False
     st.session_state["scraping_done"] = True
     st.rerun()
@@ -459,7 +284,19 @@ if st.session_state.get("is_scraping"):
 else:
     from backend.utils.feed_to_db import load_feed_companies
 
+    _scrape_errors = st.session_state.pop("scrape_errors", None)
+    if _scrape_errors:
+        SOURCE_NAMES = {"yc":"YC","bl":"Betalist","ph":"Product Hunt","ih":"Indie Hackers","gh":"GitHub Trending","hn":"HN Hiring"}
+        for src_key, msg in _scrape_errors.items():
+            st.error(f"⚠️ {SOURCE_NAMES.get(src_key, src_key)} failed to scrape: {msg}")
+
     companies = load_feed_companies(user_id, limit=60)
+
+    # Don't re-render the company already shown above (from Home's "Start Outreach") —
+    # same co_id twice on one page produces duplicate widget keys and crashes.
+    _shown_co_id = st.session_state.get("feed_outreach_co_id")
+    if _shown_co_id and not _is_sent(_shown_co_id):
+        companies = [c for c in companies if c.get("id") != _shown_co_id]
 
     if not companies:
         st.divider()

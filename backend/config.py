@@ -16,7 +16,7 @@ DATABASE_URL = os.getenv(
 
 # ── LLM ───────────────────────────────────────
 GROQ_API_KEY    = os.getenv("GROQ_API_KEY")
-LLM_MODEL       = "llama-3.1-8b-instant"  # ← fixed
+LLM_MODEL       = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
 LLM_MAX_TOKENS  = 1024
 LLM_TEMPERATURE = 0.7
 
@@ -103,7 +103,7 @@ def verify_config():
     if not os.path.exists("data"):
         issues.append("❌ data/ folder missing")
     if SECRET_KEY == "change-in-production":
-        warnings.append("⚠️ SECRET_KEY default hai")
+        warnings.append("⚠️ SECRET_KEY is still the default")
     if not TAVILY_API_KEY:
         warnings.append("⚠️ TAVILY_API_KEY missing — DDG fallback")
     if not HUNTER_API_KEY:

@@ -45,9 +45,9 @@ def get_gmail_creds(user_id: int) -> dict:
         db.close()
 
         if not profile:
-            return {"error": "Profile nahi mila"}
+            return {"error": "Profile not found"}
         if not profile.gmail_address or not profile.gmail_app_password:
-            return {"error": "Gmail credentials missing — onboarding mein Gmail App Password daalo"}
+            return {"error": "Gmail credentials missing — add your Gmail App Password in onboarding"}
 
         return {
             "email"   : profile.gmail_address.strip(),
@@ -59,7 +59,7 @@ def get_gmail_creds(user_id: int) -> dict:
 
 
 # ─────────────────────────────────────────────
-# SENT LOG  (shared helpers — tracker bhi yahi use kare)
+# SENT LOG  (shared helpers — the tracker should use these too)
 # ─────────────────────────────────────────────
 
 def get_sent_log(user_id: int) -> list:
@@ -100,11 +100,11 @@ def send_email(
     proposal   : str = "",
     website    : str = "",
 ) -> dict:
-    """Gmail SMTP se email bhejo aur log karo."""
+    """Send an email via Gmail SMTP and log it."""
 
     to_email = _clean_email(to_email)
     if not to_email:
-        return {"success": False, "error": "to_email empty hai"}
+        return {"success": False, "error": "to_email is empty"}
     if cc:
         cc = _clean_email(cc)
 
@@ -177,7 +177,7 @@ def send_email(
         }
 
     except smtplib.SMTPAuthenticationError:
-        error = "Gmail auth failed — Google Account mein 2FA on karo, phir App Password banao"
+        error = "Gmail auth failed — turn on 2FA in your Google Account, then generate an App Password"
         logger.error(f"  ❌ {error}")
         return {"success": False, "error": error}
 
@@ -197,8 +197,8 @@ def send_email(
 
 
 # ─────────────────────────────────────────────
-# LOG  (single source of truth — outreach page
-#       _update_tracker ko HATAO, yahi use karo)
+# LOG  (single source of truth — REMOVE the outreach page's
+#       _update_tracker and use this instead)
 # ─────────────────────────────────────────────
 
 def _log_sent(
@@ -214,7 +214,7 @@ def _log_sent(
     proposal    : str = "",
     website     : str = "",
 ):
-    """JSON log mein ek entry append karo."""
+    """Append an entry to the JSON log."""
     log = get_sent_log(user_id)
 
     entry = {
@@ -225,7 +225,7 @@ def _log_sent(
         "company"       : company,
         "website"       : website,
         "contact"       : contact,
-        "contact_name"  : contact,       # tracker dono key check karta hai
+        "contact_name"  : contact,       # tracker checks both keys
         "contact_role"  : contact_role,
         "gap"           : gap,
         "proposal"      : proposal,
@@ -235,13 +235,13 @@ def _log_sent(
         "followup_sent" : False,
         "followup_at"   : None,
         "followup_count": 0,
-        "status"        : "awaiting",    # tracker filter yahi dekhta hai
+        "status"        : "awaiting",    # this is what the tracker filter checks
     }
     log.append(entry)
     save_sent_log(user_id, log)
     logger.info(f"  📝 Logged to JSON: {to} ({company})")
 
-    # Google Sheets sync (optional — failure se send block nahi hoga)
+    # Google Sheets sync (optional — a failure here will not block the send)
     try:
         from backend.utils.sheets_tracker import log_cold_email
         log_cold_email(
