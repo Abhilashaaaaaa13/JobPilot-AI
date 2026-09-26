@@ -1,5 +1,5 @@
 # backend/utils/sheets_tracker.py
-# Google Sheets mein cold outreach track karo
+# Track cold outreach in Google Sheets
 # Job Applications tab removed — Track A dropped
 
 import os
@@ -261,7 +261,7 @@ def log_followup(
         return False
 
     try:
-        # 1 — Followups tab mein log karo
+        # 1 — Log to the Followups tab
         fu_ws = get_or_create_sheet(client, TAB_FOLLOWUPS)
         if fu_ws:
             fu_ws.append_row([
@@ -274,7 +274,7 @@ def log_followup(
                 "Sent"
             ])
 
-        # 2 — Original row update karo
+        # 2 — Update the original row
         ws = get_or_create_sheet(client, tab_name)
         if not ws:
             logger.warning(
@@ -337,11 +337,11 @@ def log_followup(
 
 
 # ─────────────────────────────────────────────
-# SYNC ALL — Sent log se Sheet sync karo
+# SYNC ALL — sync the sent log to the Sheet
 # ─────────────────────────────────────────────
 
 def sync_sent_log_to_sheet(user_id: int) -> dict:
-    """Pura sent log Sheet se sync karo."""
+    """Sync the entire sent log to the Sheet."""
 
     log_file = f"uploads/{user_id}/sent_emails/log.json"
 

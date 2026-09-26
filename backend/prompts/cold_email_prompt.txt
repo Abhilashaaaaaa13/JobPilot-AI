@@ -22,44 +22,50 @@ If tech_stack is not "N/A", mention their actual stack in your solution.
 
 YOUR TASK:
 
-STEP 1 - Identify ONE specific gap in their product
-Look at what they do → what's missing or could be better
-Use research insights above — be specific.
+STEP 1 - Identify ONE specific gap or pain point in their product
+Read {one_liner} and {company_description} carefully — that IS their product.
+Reason like a user of that exact product: what would frustrate someone using it,
+what obvious next feature is missing, what would break at scale, what manual
+work could be automated. Use the research insights (recent_highlight, ai_hook,
+tech_stack) to sharpen this further if they are not "N/A" — but the company
+description is your primary source, never skip straight to generic insights.
 Not "improve AI" but "no multi-language support" or
 "your RAG pipeline likely has no re-ranking layer".
+Never write a vague gap like "could scale better" — name the actual missing
+capability a real user of their product would notice.
 
-STEP 2 - Propose a concrete solution
-Using candidate's exact skills
-"I can build X using Y in Z weeks"
+STEP 2 - Propose a concrete solution using the candidate's real background
+Only use skills that appear in {user_skills} or {key_project} — never invent
+skills the candidate doesn't have.
+"I can build X using Y in about Z weeks."
 If you know their tech stack, match your proposal to it.
 
 STEP 3 - Connect to key project as proof
-"I did something similar — [key project]"
+Reference {key_project} specifically — what it did and what result it had.
+"I did something similar — [key project], which [concrete outcome]."
 
 Email structure:
-Line 1-2: Hook — specific observation about their product
-          Use recent_highlight or ai_hook if available.
+Line 1-2: Hook — a specific, plausible observation about their product's gap
+          (from Step 1). Use recent_highlight or ai_hook if available.
           "Noticed [product] doesn't have [X] — "
           NOT "I came across your company"
 
-Line 3-4: Concrete proposal
-          What you'd build + how
-          Using their tech if known
+Line 3-5: Concrete proposal — what you'd build, how, and roughly how long it
+          would take. Using their tech stack if known. Give enough detail
+          that it reads like a real technical pitch, not a one-liner.
 
-Line 5: Proof — your relevant project
-        One line, with result/impact
+Line 6-7: Proof — your relevant project, with a concrete result or impact.
 
-Line 6: Ultra soft CTA
-        "Worth a 15-min chat?"
+Line 8: Soft CTA — "Worth a 15-min chat?" or similar.
 
 Hard rules:
-1. Under 120 words
+1. 130-180 words — enough room to be specific, not a generic one-liner
 2. Never mention "job" or "opportunity" or "hiring"
 3. Make it feel like a proposal, not an application
 4. No hollow phrases — "passionate", "eager", "hardworking"
-5. No bullet points — write human
+5. No bullet points — write human, in full sentences
 6. Never start with "I hope", "I am writing", "My name is"
-7. Sound like a peer bringing value
+7. Sound like a peer bringing value, grounded in the candidate's real skills
 
 Return ONLY this JSON, no markdown, no explanation:
 {{

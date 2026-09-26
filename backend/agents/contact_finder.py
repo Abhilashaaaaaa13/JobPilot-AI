@@ -179,8 +179,9 @@ Rules:
         response = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=600,
-            temperature=0.1
+            max_tokens=800,
+            temperature=0.1,
+            reasoning_effort="low"
         )
         
         raw = response.choices[0].message.content.strip()

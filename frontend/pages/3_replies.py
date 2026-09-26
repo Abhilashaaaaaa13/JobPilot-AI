@@ -5,6 +5,7 @@
 
 import sys
 import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import streamlit as st
@@ -42,35 +43,15 @@ user_id = st.session_state["user_id"]
 # STYLING
 # ─────────────────────────────────────────────
 
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
-html,body,[data-testid="stAppViewContainer"]{background:#0d0d0d!important;color:#f0f0f0!important;font-family:'DM Sans',sans-serif!important}
-[data-testid="stSidebar"]{background:#161616!important;border-right:1px solid #2a2a2a!important}
-h1,h2,h3{font-family:'Space Mono',monospace!important}
-.stButton>button{background:#e8ff47!important;color:#000!important;border:none!important;border-radius:4px!important;font-family:'Space Mono',monospace!important;font-weight:700!important;font-size:12px!important}
-.stButton>button[kind="secondary"]{background:transparent!important;color:#f0f0f0!important;border:1px solid #2a2a2a!important}
-.stExpander{border:1px solid #2a2a2a!important;border-radius:6px!important;background:#161616!important}
-[data-testid="stSidebarNav"]{display:none!important}
-.stTabs [data-baseweb="tab-list"]{background:transparent!important;border-bottom:1px solid #2a2a2a!important}
-.stTabs [data-baseweb="tab"]{background:transparent!important;color:#666!important;font-family:'Space Mono',monospace!important;font-size:12px!important;border-bottom:2px solid transparent!important;padding:10px 20px!important}
-.stTabs [aria-selected="true"]{color:#e8ff47!important;border-bottom-color:#e8ff47!important}
-</style>
-""", unsafe_allow_html=True)
+from components.theme import apply_theme
+apply_theme()
 
 # ─────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────
 
-with st.sidebar:
-    st.markdown('<p style="font-family:\'Space Mono\',monospace;font-size:18px;color:#e8ff47;font-weight:700">⚡ OutreachAI</p>', unsafe_allow_html=True)
-    st.markdown(f'<p style="color:#666;font-size:12px;font-family:\'Space Mono\',monospace">{st.session_state.get("email","")}</p>', unsafe_allow_html=True)
-    st.divider()
-    st.page_link("app.py",                label="⚡  Home",            use_container_width=True)
-    st.page_link("pages/2_onboarding.py", label="👤  Profile Setup",   use_container_width=True)
-    st.page_link("pages/4_outreach.py",   label="🚀  Cold Outreach",   use_container_width=True)
-    st.page_link("pages/5_tracker.py",    label="📊  Tracker",         use_container_width=True)
-    st.page_link("pages/3_replies.py",    label="📬  Replies & Drafts", use_container_width=True)
+from components.sidebar import render_sidebar
+render_sidebar()
 
 # ─────────────────────────────────────────────
 # PAGE TITLE + CHECK NOW BUTTON
@@ -349,15 +330,16 @@ with tab3:
 with st.expander("🔧 Debug Info", expanded=False):
     st.markdown("### Scheduler Status")
 
-    sched = st.session_state.get("scheduler")
-    if sched and sched.running:
+    from components.scheduler_control import get_scheduler, is_running, render_scheduler_controls
+    if is_running():
+        sched = get_scheduler()
         st.success("🟢 Scheduler is running")
         for job in sched.get_jobs():
             next_run = job.next_run_time.strftime("%H:%M") if job.next_run_time else "?"
             st.caption(f"⏰ {job.id}: Next run at {next_run}")
     else:
-        err = st.session_state.get("scheduler_error", "")
-        st.warning(f"🔴 Scheduler not running. {err[:80] if err else ''}")
+        st.warning("🔴 Scheduler not running.")
+    render_scheduler_controls()
 
     st.divider()
     st.markdown("### Manual Triggers (Testing)")

@@ -49,6 +49,9 @@ def _sqlite_add_missing_columns():
         ("companies", "feed_added_at",    "VARCHAR(50) DEFAULT ''"),
         ("companies", "contacted_at",     "VARCHAR(50)"),
         ("companies", "tech_stack",       "TEXT DEFAULT '[]'"),
+        ("draft_actions", "sent_email_id",  "INTEGER REFERENCES sent_emails(id)"),
+        ("draft_actions", "action",         "VARCHAR(50)"),
+        ("draft_actions", "user_action_at", "DATETIME"),
     ]
 
     inspector = inspect(engine)

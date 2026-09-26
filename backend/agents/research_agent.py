@@ -1,12 +1,12 @@
 # backend/agents/research_agent.py
 #
-# Company ke baare mein research karo
-# Taaki cold email personalized ho sake
+# Research the company
+# So the cold email can be personalized
 #
 # AGENT VERSION:
-# - Website nahi mili → khud dhundho (Google → LinkedIn → guess)
-# - Scrape data kam → multiple pages try karo
-# - Search fail → Tavily → DuckDuckGo → description fallback
+# - Website not found → find it automatically (Google → LinkedIn → guess)
+# - Scraped data too little → try multiple pages
+# - Search fails → Tavily → DuckDuckGo → description fallback
 #
 # DB-free — stateless.
 # Input : company_name, website, description
@@ -37,15 +37,15 @@ HEADERS = {
 
 # ─────────────────────────────────────────────
 # AGENT STEP 0 — Website Finder
-# Website nahi mili toh khud dhundho
+# If no website was found, find it automatically
 # ─────────────────────────────────────────────
 
 def _find_website_agent(company_name: str) -> str:
     """
-    Company ka website dhundho — 3 strategies:
-    1. DuckDuckGo — naam match karo URL mein
+    Find the company's website — 3 strategies:
+    1. DuckDuckGo — match the name in the URL
     2. LinkedIn company page
-    3. Guess karo domain se
+    3. Guess the domain
     """
     logger.info(f"  🔎 Website finder: {company_name}")
 
@@ -60,8 +60,8 @@ def _find_website_agent(company_name: str) -> str:
             ))
             for r in results:
                 url = r.get("href", "")
-                # URL mein company name ka koi part ho
-                name_part = clean_name[:6]  # pehle 6 chars
+                # URL should contain some part of the company name
+                name_part = clean_name[:6]  # first 6 chars
                 if (
                     url.startswith("http")
                     and name_part in url.lower()
@@ -75,7 +75,7 @@ def _find_website_agent(company_name: str) -> str:
     except Exception as e:
         logger.warning(f"  DDG website search error: {e}")
 
-    # Strategy 2 — LinkedIn company page (se website extract karein)
+    # Strategy 2 — LinkedIn company page (extract the website from it)
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(
@@ -85,7 +85,7 @@ def _find_website_agent(company_name: str) -> str:
             if results:
                 li_url = results[0].get("href", "")
                 if "linkedin.com/company" in li_url:
-                    # LinkedIn se actual website fetch karo
+                    # Fetch the actual website from LinkedIn
                     website = _extract_website_from_linkedin(li_url)
                     if website:
                         logger.info(f"  ✅ Website found via LinkedIn: {website}")
@@ -93,21 +93,21 @@ def _find_website_agent(company_name: str) -> str:
     except Exception as e:
         logger.warning(f"  LinkedIn website search error: {e}")
 
-    # Strategy 3 — Guess karo
+    # Strategy 3 — Guess it
     guessed = f"https://{clean_name}.com"
     logger.info(f"  ⚠️ Guessing website: {guessed}")
     return guessed
 
 
 def _extract_website_from_linkedin(linkedin_url: str) -> str:
-    """LinkedIn company page se website link nikalo."""
+    """Extract the website link from a LinkedIn company page."""
     try:
         res = req.get(linkedin_url, headers=HEADERS, timeout=8)
         if res.status_code != 200:
             return ""
         soup = BeautifulSoup(res.text, "html.parser")
 
-        # LinkedIn pe website link hoti hai
+        # LinkedIn pages have a website link
         for a in soup.find_all("a", href=True):
             href = a["href"]
             if (
@@ -128,8 +128,8 @@ def _extract_website_from_linkedin(linkedin_url: str) -> str:
 
 def scrape_website(url: str) -> str:
     """
-    Company website se text nikalo.
-    /about aur /team pages most useful hain.
+    Extract text from the company website.
+    /about and /team pages are most useful.
     """
     if not url:
         return ""
@@ -165,17 +165,17 @@ def scrape_website(url: str) -> str:
 
 def _scrape_with_fallback(url: str, company_name: str) -> str:
     """
-    AGENT — scrape karo, kam data mila toh aur try karo.
+    AGENT — scrape the site, and if the data is too little, try more.
     """
     text = scrape_website(url)
 
-    # Data kaafi hai
+    # We have enough data
     if len(text) >= 300:
         return text
 
-    logger.info(f"  ⚠️ Scrape data kam ({len(text)} chars) — extra pages try kar raha hoon")
+    logger.info(f"  ⚠️ Scraped data too little ({len(text)} chars) — trying extra pages")
 
-    # Extra pages try karo
+    # Try extra pages
     extra_pages = [
         url.rstrip("/") + "/product",
         url.rstrip("/") + "/features",
@@ -249,7 +249,7 @@ def search_tavily(company_name: str) -> str:
 
 def _search_with_fallback(company_name: str) -> str:
     """
-    AGENT — Tavily try karo, fail toh DDG, fail toh empty string.
+    AGENT — try Tavily first, fall back to DDG, then an empty string.
     """
     # Try 1 — Tavily (better quality)
     result = search_tavily(company_name)
@@ -268,7 +268,7 @@ def _search_with_fallback(company_name: str) -> str:
 
 
 # ─────────────────────────────────────────────
-# AGENT STEP 3 — Groq Se Summarize
+# AGENT STEP 3 — Summarize with Groq
 # ─────────────────────────────────────────────
 
 def summarize_with_groq(
@@ -304,8 +304,9 @@ Return ONLY a JSON object, no explanation, no markdown:
         response = client.chat.completions.create(
             model       = LLM_MODEL,
             messages    = [{"role": "user", "content": prompt}],
-            max_tokens  = 400,
-            temperature = 0.1
+            max_tokens  = 600,
+            temperature = 0.1,
+            reasoning_effort = "low"
         )
         raw = response.choices[0].message.content.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
@@ -334,11 +335,11 @@ def research_agent(
     description : str = ""
 ) -> dict:
     """
-    AGENT VERSION — khud decide karta hai:
-    1. Website nahi mili? → _find_website_agent() call karo
-    2. Scrape data kam? → extra pages try karo
-    3. Search fail? → fallback sources try karo
-    4. Sab fail? → description use karo as fallback
+    AGENT VERSION — decides on its own:
+    1. Website not found? → call _find_website_agent()
+    2. Scraped data too little? → try extra pages
+    3. Search fails? → try fallback sources
+    4. Everything fails? → use description as fallback
 
     Called by:
     - research_companies_node (pipeline, after user selects company)
@@ -346,18 +347,18 @@ def research_agent(
     """
     logger.info(f"🔍 Research Agent: {company_name}")
 
-    # ── DECISION 1 — Website hai? ─────────────
+    # ── DECISION 1 — Do we have a website? ────
     if not website:
         logger.info(f"  Website missing — finding autonomously")
         website = _find_website_agent(company_name)
 
-    # ── DECISION 2 — Scrape karo ──────────────
+    # ── DECISION 2 — Scrape it ────────────────
     website_text = _scrape_with_fallback(website, company_name)
 
-    # ── DECISION 3 — Search karo ──────────────
+    # ── DECISION 3 — Search ───────────────────
     search_text = _search_with_fallback(company_name)
 
-    # ── DECISION 4 — Sab fail? description use karo
+    # ── DECISION 4 — Everything failed? use description
     if not website_text and not search_text and description:
         logger.warning(f"  ⚠️ No data found — using base description as fallback")
         website_text = description

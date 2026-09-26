@@ -3,6 +3,7 @@
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import json
 import streamlit as st
@@ -31,33 +32,14 @@ db.close()
 already_setup = profile and profile.resume_path
 
 # ─────────────────────────────────────────────
-# CSS (inherits from app.py if multi-page)
+# CSS
 # ─────────────────────────────────────────────
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
-html, body, [data-testid="stAppViewContainer"] { background:#0d0d0d!important; color:#f0f0f0!important; font-family:'DM Sans',sans-serif!important; }
-[data-testid="stSidebar"] { background:#161616!important; border-right:1px solid #2a2a2a!important; }
-h1,h2,h3 { font-family:'Space Mono',monospace!important; }
-.stButton>button { background:#e8ff47!important; color:#000!important; border:none!important; border-radius:4px!important; font-family:'Space Mono',monospace!important; font-weight:700!important; }
-.stButton>button[kind="secondary"] { background:transparent!important; color:#f0f0f0!important; border:1px solid #2a2a2a!important; }
-.stTextInput>div>div>input, .stTextArea>div>div>textarea { background:#161616!important; border:1px solid #2a2a2a!important; color:#f0f0f0!important; }
-.stSelectbox>div>div { background:#161616!important; border-color:#2a2a2a!important; color:#f0f0f0!important; }
-[data-testid="stSidebarNav"] { display:none!important; }
-.step-header { font-family:'Space Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.15em; color:#666; margin-bottom:8px; }
-.filled-badge { background:rgba(74,222,128,0.1); color:#4ade80; border:1px solid rgba(74,222,128,0.3); border-radius:3px; padding:2px 8px; font-size:11px; font-family:'Space Mono',monospace; }
-</style>
-""", unsafe_allow_html=True)
+from components.theme import apply_theme
+apply_theme()
 
 # ── Sidebar ───────────────────────────────────
-with st.sidebar:
-    st.markdown('<p style="font-family:\'Space Mono\',monospace;font-size:18px;color:#e8ff47;font-weight:700">⚡ OutreachAI</p>', unsafe_allow_html=True)
-    st.markdown(f'<p style="color:#666;font-size:12px;font-family:\'Space Mono\',monospace">{st.session_state.get("email","")}</p>', unsafe_allow_html=True)
-    st.divider()
-    st.page_link("app.py",                label="⚡  Home",          use_container_width=True)
-    st.page_link("pages/2_onboarding.py", label="👤  Profile Setup", use_container_width=True)
-    st.page_link("pages/4_outreach.py",   label="🚀  Cold Outreach", use_container_width=True)
-    st.page_link("pages/5_tracker.py",    label="📊  Tracker",       use_container_width=True)
+from components.sidebar import render_sidebar
+render_sidebar()
 
 # ── Header ────────────────────────────────────
 st.markdown("# 👤 Profile Setup")
@@ -67,7 +49,7 @@ if already_setup:
         unsafe_allow_html=True
     )
 else:
-    st.caption("First setup and then outreah")
+    st.caption("Set up your profile first, then start outreach")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -80,15 +62,35 @@ st.markdown('<p class="step-header">Step 1 — Resume</p>', unsafe_allow_html=Tr
 # Pre-fill from DB
 existing_resume = profile.resume_path if profile else ""
 if existing_resume and os.path.exists(existing_resume):
-    st.markdown(
-        f'<span class="filled-badge">✓ Resume already uploaded</span>&nbsp;'
-        f'<span style="color:#666;font-size:12px">{os.path.basename(existing_resume)}</span>',
-        unsafe_allow_html=True
-    )
+    col_badge, col_remove = st.columns([4, 1])
+    with col_badge:
+        st.markdown(
+            f'<span class="filled-badge">✓ Resume already uploaded</span>&nbsp;'
+            f'<span style="color:#666;font-size:12px">{os.path.basename(existing_resume)}</span>',
+            unsafe_allow_html=True
+        )
+    with col_remove:
+        if st.button("🗑️ Remove", key="remove_resume_btn", use_container_width=True):
+            try:
+                os.remove(existing_resume)
+            except Exception:
+                pass
+            db2 = SessionLocal()
+            try:
+                prof2 = db2.query(UserProfile).filter(UserProfile.user_id == user_id).first()
+                if prof2:
+                    prof2.resume_path = ""
+                    db2.commit()
+            finally:
+                db2.close()
+            for k in ("resume_path", "resume_text", "extracted_skills", "extracted_roles", "resume_parsed"):
+                st.session_state.pop(k, None)
+            st.success("Resume removed.")
+            st.rerun()
     st.markdown("<br>", unsafe_allow_html=True)
 
 uploaded = st.file_uploader(
-    "Resume upload karo (PDF)" if not existing_resume else "Replace resume (optional)",
+    "Upload your resume (PDF)" if not existing_resume else "Replace resume (optional)",
     type=["pdf"]
 )
 
@@ -136,10 +138,11 @@ Resume:
 {resume_text[:4000]}
 """
                 res = client.chat.completions.create(
-                    model       = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile"),
+                    model       = os.getenv("LLM_MODEL", "openai/gpt-oss-20b"),
                     messages    = [{"role": "user", "content": prompt}],
-                    max_tokens  = 800,
-                    temperature = 0.1
+                    max_tokens  = 900,
+                    temperature = 0.1,
+                    reasoning_effort = "low"
                 )
                 raw    = res.choices[0].message.content.strip()
                 raw    = raw.replace("```json","").replace("```","").strip()
@@ -381,7 +384,7 @@ if save_clicked:
         st.error("Select atleast one domain")
         st.stop()
     if not target_roles_text.strip():
-        st.error("Target roles daalo")
+        st.error("Enter target roles")
         st.stop()
 
     resume_path_to_save = st.session_state.get(
@@ -389,7 +392,7 @@ if save_clicked:
         profile.resume_path if profile else ""
     )
     if not resume_path_to_save:
-        st.error("Upload Resume(Required) ")
+        st.error("Upload resume (required)")
         st.stop()
 
     target_roles = [r.strip() for r in target_roles_text.split(",") if r.strip()]

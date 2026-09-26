@@ -9,9 +9,6 @@ from backend.database import init_db
 
 init_db()
 
-if "scheduler" not in st.session_state:
-    st.session_state["scheduler"] = None
-
 st.set_page_config(
     page_title="OutreachAI",
     page_icon="⚡",
@@ -19,30 +16,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
-:root{--bg:#0d0d0d;--surface:#161616;--border:#2a2a2a;--accent:#e8ff47;--text:#f0f0f0;--muted:#666;--success:#4ade80;--warning:#fbbf24}
-html,body,[data-testid="stAppViewContainer"]{background:var(--bg)!important;color:var(--text)!important;font-family:'DM Sans',sans-serif!important}
-[data-testid="stSidebar"]{background:var(--surface)!important;border-right:1px solid var(--border)!important}
-h1,h2,h3{font-family:'Space Mono',monospace!important;letter-spacing:-.03em!important}
-.stButton>button{background:var(--accent)!important;color:#000!important;border:none!important;border-radius:4px!important;font-family:'Space Mono',monospace!important;font-weight:700!important;font-size:13px!important;padding:10px 20px!important;transition:all .15s!important}
-.stButton>button:hover{background:#fff!important;transform:translateY(-1px)!important}
-.stButton>button[kind="secondary"]{background:transparent!important;color:var(--text)!important;border:1px solid var(--border)!important}
-.stButton>button[kind="secondary"]:hover{border-color:var(--accent)!important;color:var(--accent)!important}
-.stTextInput>div>div>input,.stTextArea>div>div>textarea{background:var(--surface)!important;border:1px solid var(--border)!important;color:var(--text)!important;border-radius:4px!important}
-.stTextInput>div>div>input:focus,.stTextArea>div>div>textarea:focus{border-color:var(--accent)!important;box-shadow:0 0 0 2px rgba(232,255,71,.1)!important}
-.stTabs [data-baseweb="tab-list"]{background:transparent!important;border-bottom:1px solid var(--border)!important;gap:0!important}
-.stTabs [data-baseweb="tab"]{background:transparent!important;color:var(--muted)!important;font-family:'Space Mono',monospace!important;font-size:12px!important;border-bottom:2px solid transparent!important;padding:10px 20px!important}
-.stTabs [aria-selected="true"]{color:var(--accent)!important;border-bottom-color:var(--accent)!important}
-.stMetric{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:6px!important;padding:16px!important}
-.stMetric label{color:var(--muted)!important;font-size:11px!important;text-transform:uppercase;letter-spacing:.1em}
-.stMetric [data-testid="metric-container"]>div:nth-child(2){color:var(--accent)!important;font-family:'Space Mono',monospace!important;font-size:28px!important}
-.stExpander{border:1px solid var(--border)!important;border-radius:6px!important;background:var(--surface)!important}
-[data-testid="stSidebarNav"]{display:none!important}
-.desc-box{background:rgba(232,255,71,.04);border-left:2px solid rgba(232,255,71,.25);padding:8px 12px;border-radius:0 4px 4px 0;font-size:12px;color:#ccc;margin:4px 0 6px 0;line-height:1.5}
-</style>
-""", unsafe_allow_html=True)
+from components.theme import apply_theme
+apply_theme()
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -181,71 +156,23 @@ if "user_id" not in st.session_state:
     st.stop()
 
 
-# ── Scheduler check ───────────────────────────────────────────────────────────
-
-def _check_scheduler_process():
-    try:
-        import psutil
-        for p in psutil.process_iter(["cmdline"]):
-            if "run_scheduler.py" in " ".join(p.info["cmdline"] or []):
-                return True
-    except Exception:
-        pass
-    return False
-
-
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
-with st.sidebar:
-    st.markdown("### ⚡ OutreachAI")
-    st.caption(st.session_state.get("email", ""))
-    st.divider()
-    st.page_link("app.py",                label="⚡  Home",          use_container_width=True)
-    st.page_link("pages/2_onboarding.py", label="👤  Profile Setup", use_container_width=True)
-    st.page_link("pages/4_outreach.py",   label="🚀  Cold Outreach", use_container_width=True)
-    st.page_link("pages/5_tracker.py",    label="📊  Tracker",       use_container_width=True)
-    try:
-        from backend.pipeline.reply_handler import NotificationManager
-        _pending     = NotificationManager.get_pending_notifications(st.session_state["user_id"])
-        _reply_count = len([n for n in _pending if n["type"] == "reply_received"])
-        _drafts_label = f"📬  Replies & Drafts  🔴 {_reply_count}" if _reply_count else "📬  Replies & Drafts"
-    except Exception:
-        _reply_count  = 0
-        _drafts_label = "📬  Replies & Drafts"
-    st.page_link("pages/3_replies.py", label=_drafts_label, use_container_width=True)
-    st.divider()
-
-    user_id  = st.session_state["user_id"]
-    log_file = f"uploads/{user_id}/sent_emails/log.json"
-    if os.path.exists(log_file):
-        try:
-            with open(log_file, encoding="utf-8") as f:
-                _log = json.load(f)
-            st.metric("Emails Sent", len(_log))
-            st.metric("Replies",     sum(1 for e in _log if e.get("replied")))
-        except Exception:
-            pass
-    st.divider()
-
-    _sched_running = _check_scheduler_process()
-    if _sched_running:
-        st.markdown('<p style="color:#4ade80;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">🟢 SCHEDULER ON</p>', unsafe_allow_html=True)
-        st.markdown('<p style="color:#555;font-size:10px;font-family:\'Space Mono\',monospace;margin:2px 0">· Auto follow-ups running</p>', unsafe_allow_html=True)
-    else:
-        st.markdown('<p style="color:#f87171;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">🔴 SCHEDULER OFF</p>', unsafe_allow_html=True)
-        st.markdown('<p style="color:#555;font-size:10px;font-family:\'Space Mono\',monospace;margin:2px 0">· Run: python run_scheduler.py</p>', unsafe_allow_html=True)
-    st.divider()
-
-    if st.button("Logout", key="logout_btn", use_container_width=True):
-        _remember_me_clear()
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
-        st.rerun()
+from components.sidebar import render_sidebar
+from components.formatting import short_url
+from components.email_actions import render_email_panel
+render_sidebar()
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 user_id = st.session_state["user_id"]
+
+# Auto-start the background scheduler once logged in, so reply-checks, follow-ups,
+# and Sheets sync run without needing a manual click every time the app boots.
+from components.scheduler_control import start_scheduler
+start_scheduler()
+
 st.markdown("# ⚡ Dashboard")
 
 from backend.database import SessionLocal
@@ -414,6 +341,11 @@ with right:
     if not feed_companies:
         st.info("Feed is empty. Click 'Find More Startups' or Refresh Feed.")
     else:
+        # Companies with a findable email go first — those are ready for outreach right now.
+        feed_companies = sorted(
+            feed_companies,
+            key=lambda c: not any(ct.get("email") for ct in c.get("contacts", [])),
+        )
         for idx, company in enumerate(feed_companies[:12]):
             name     = (company.get("name")     or "").strip()
             website  = (company.get("website")   or "").strip()
@@ -460,8 +392,7 @@ with right:
                 col_w, col_e = st.columns(2)
                 with col_w:
                     if website:
-                        display = website.replace("https://", "").replace("http://", "").rstrip("/").split("/")[0]
-                        st.markdown(f"🔗 [{display}]({website})")
+                        st.markdown(f"🔗 [{short_url(website)}]({website})")
                     else:
                         st.caption("No website")
                 with col_e:
@@ -473,34 +404,34 @@ with right:
                     else:
                         st.caption("No email found")
 
-                if st.button("✉️ Start Outreach", key=f"feed_outreach_{idx}",
-                             use_container_width=True, type="primary"):
-                    if not co_db_id:
-                        from backend.utils.feed_to_db import save_feed_company_to_db
-                        _, co_db_id = save_feed_company_to_db(user_id, company)
-                    st.session_state["feed_outreach_company"] = company
-                    st.session_state["feed_outreach_co_id"]   = co_db_id
-                    st.switch_page("pages/4_outreach.py")
+                if not co_db_id:
+                    from backend.utils.feed_to_db import save_feed_company_to_db
+                    _, co_db_id = save_feed_company_to_db(user_id, company)
+
+                show_key = f"home_show_email_{co_db_id}"
+                if not st.session_state.get(show_key):
+                    if st.button("✉️ View Email", key=f"feed_outreach_{idx}",
+                                 use_container_width=True, type="primary"):
+                        st.session_state[show_key] = True
+                        st.rerun()
+                else:
+                    render_email_panel(user_id, co_db_id, company, uid=f"home_{co_db_id}", auto_draft=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     col_b1, col_b2 = st.columns(2)
     with col_b1:
-        if st.button("🚀 Outreach Page", key="home_outreach", use_container_width=True):
+        if st.button("🚀 Start Outreach", key="home_outreach", use_container_width=True):
             st.switch_page("pages/4_outreach.py")
     with col_b2:
         if st.button("🔄 Refresh Feed", key="home_refresh", use_container_width=True):
             with st.spinner("Refreshing feed..."):
                 try:
                     from backend.agents.feed_agent import refresh_feed
-                    result  = refresh_feed()
-                    new_cos = result.get("companies", [])
-                    if new_cos:
-                        from backend.utils.feed_to_db import save_companies_bulk, sync_feed_json
-                        added = save_companies_bulk(user_id, new_cos)
-                        sync_feed_json(user_id)
-                        st.success(f"{added} new companies added to DB")
+                    result = refresh_feed(user_id)
+                    if result.get("error"):
+                        st.error(f"Refresh failed: {result['error']}")
                     else:
-                        st.success(f"{result.get('new', 0)} new companies added")
+                        st.success(f"{result.get('new', 0)} new companies added to DB")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
