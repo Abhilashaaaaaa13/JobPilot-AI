@@ -21,7 +21,7 @@ export default function CompanyCard({ company, defaultOpen = false, autoDraft = 
     <div className="card overflow-hidden">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full text-left p-4 flex items-center justify-between gap-3 hover:bg-[#ffffff05] transition-colors"
+        className="w-full text-left p-4 flex items-center justify-between gap-3 hover:bg-black/3 transition-colors"
       >
         <div className="min-w-0">
           <p className="font-medium truncate">
@@ -44,7 +44,7 @@ export default function CompanyCard({ company, defaultOpen = false, autoDraft = 
       {open && (
         <div className="border-t border-border p-4 flex flex-col gap-4">
           {company.description && company.description !== company.one_liner && (
-            <div className="rounded bg-[#a3e63608] border-l-2 border-accent/30 p-3 text-sm text-text/80">
+            <div className="rounded bg-[#58811210] border-l-2 border-accent/30 p-3 text-sm text-text/80">
               📋 {company.description.slice(0, 300)}
             </div>
           )}
