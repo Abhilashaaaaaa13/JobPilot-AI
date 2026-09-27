@@ -119,7 +119,7 @@ export default function EmailPanel({ company, autoDraft = false, onSent }) {
           </div>
         )}
         {draft.why_fits && (
-          <div className="rounded bg-[#8b5cf610] border border-accent/20 p-2">
+          <div className="rounded bg-[#a3e63610] border border-accent/20 p-2">
             <b className="text-accent uppercase">Why you</b>
             <p className="mt-1 text-text/80 line-clamp-3">{draft.why_fits}</p>
           </div>

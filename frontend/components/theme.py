@@ -15,13 +15,13 @@ _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
 
 :root {
-    --bg: #0a0a12;
-    --surface: #15151f;
-    --border: #29293c;
-    --accent: #8b5cf6;
-    --text: #f1f1f6;
-    --muted: #7a7a8c;
-    --success: #34d399;
+    --bg: #1c1c1c;
+    --surface: #262626;
+    --border: #3d3d3a;
+    --accent: #a3e635;
+    --text: #f5f5f0;
+    --muted: #9a9a92;
+    --success: #4ade80;
     --warning: #fbbf24;
     --danger: #f87171;
 }
@@ -41,7 +41,7 @@ h1, h2, h3 { font-family: 'Space Mono', monospace !important; letter-spacing: -.
 
 .stButton>button {
     background: var(--accent) !important;
-    color: #fff !important;
+    color: #1c1c1c !important;
     border: none !important;
     border-radius: 4px !important;
     font-family: 'Space Mono', monospace !important;
@@ -50,7 +50,7 @@ h1, h2, h3 { font-family: 'Space Mono', monospace !important; letter-spacing: -.
     padding: 10px 20px !important;
     transition: all .15s !important;
 }
-.stButton>button:hover { background: #a480fa !important; transform: translateY(-1px) !important; }
+.stButton>button:hover { background: #bef264 !important; transform: translateY(-1px) !important; }
 .stButton>button[kind="secondary"] {
     background: transparent !important;
     color: var(--text) !important;
@@ -66,7 +66,7 @@ h1, h2, h3 { font-family: 'Space Mono', monospace !important; letter-spacing: -.
 }
 .stTextInput>div>div>input:focus, .stTextArea>div>div>textarea:focus {
     border-color: var(--accent) !important;
-    box-shadow: 0 0 0 2px rgba(139, 92, 246, .15) !important;
+    box-shadow: 0 0 0 2px rgba(163, 230, 53, .15) !important;
 }
 
 .stTabs [data-baseweb="tab-list"] { background: transparent !important; border-bottom: 1px solid var(--border) !important; gap: 0 !important; }
@@ -96,8 +96,8 @@ h1, h2, h3 { font-family: 'Space Mono', monospace !important; letter-spacing: -.
 .stExpander { border: 1px solid var(--border) !important; border-radius: 6px !important; background: var(--surface) !important; }
 
 .desc-box {
-    background: rgba(139, 92, 246, .05);
-    border-left: 2px solid rgba(139, 92, 246, .3);
+    background: rgba(163, 230, 53, .05);
+    border-left: 2px solid rgba(163, 230, 53, .3);
     padding: 8px 12px;
     border-radius: 0 4px 4px 0;
     font-size: 12px;
@@ -120,8 +120,8 @@ h1, h2, h3 { font-family: 'Space Mono', monospace !important; letter-spacing: -.
     font-size: 13px;
 }
 .hook-box {
-    background: rgba(139, 92, 246, .05);
-    border: 1px solid rgba(139, 92, 246, .2);
+    background: rgba(163, 230, 53, .05);
+    border: 1px solid rgba(163, 230, 53, .2);
     border-radius: 6px;
     padding: 10px 14px;
 }

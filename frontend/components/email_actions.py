@@ -166,7 +166,7 @@ def render_email_panel(user_id: int, co_id, company: dict, uid: str, auto_draft:
             st.markdown(f'<div class="proposal-box"><b style="font-size:11px;color:#4ade80">PROPOSAL</b><br>{ep["proposal"][:100]}</div>', unsafe_allow_html=True)
     with g3:
         if ep.get("why_fits"):
-            st.markdown(f'<div class="hook-box"><b style="font-size:11px;color:#8b5cf6">WHY YOU</b><br>{ep["why_fits"][:100]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="hook-box"><b style="font-size:11px;color:#a3e635">WHY YOU</b><br>{ep["why_fits"][:100]}</div>', unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
     edit_key = f"editing_{uid}"
