@@ -44,7 +44,7 @@ export default function CompanyCard({ company, defaultOpen = false, autoDraft = 
       {open && (
         <div className="border-t border-border p-4 flex flex-col gap-4">
           {company.description && company.description !== company.one_liner && (
-            <div className="rounded bg-[#e8ff4708] border-l-2 border-accent/30 p-3 text-sm text-text/80">
+            <div className="rounded bg-[#8b5cf608] border-l-2 border-accent/30 p-3 text-sm text-text/80">
               📋 {company.description.slice(0, 300)}
             </div>
           )}

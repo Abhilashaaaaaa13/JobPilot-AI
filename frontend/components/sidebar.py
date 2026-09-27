@@ -40,7 +40,7 @@ def render_sidebar():
     with st.sidebar:
         st.markdown(
             '<p style="font-family:\'Space Mono\',monospace;font-size:18px;'
-            'color:#e8ff47;font-weight:700;margin-bottom:0">⚡ OutreachAI</p>',
+            'color:#8b5cf6;font-weight:700;margin-bottom:0">⚡ OutreachAI</p>',
             unsafe_allow_html=True,
         )
         st.caption(email)
