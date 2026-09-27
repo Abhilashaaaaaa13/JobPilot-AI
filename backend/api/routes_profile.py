@@ -186,7 +186,15 @@ def remove_resume(user: User = Depends(get_current_user)):
                     os.remove(profile.resume_path)
             except Exception:
                 pass
-            profile.resume_path = ""
+            # The rest of the profile (one-liner, roles, skills) was derived
+            # from this resume — removing it resets those too rather than
+            # leaving stale data that no longer matches anything uploaded.
+            profile.resume_path       = ""
+            profile.one_liner         = ""
+            profile.skills            = "[]"
+            profile.target_roles      = "[]"
+            profile.experience_years  = 0
+            profile.education         = ""
             db.commit()
         return {"success": True}
     finally:

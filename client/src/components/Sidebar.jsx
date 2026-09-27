@@ -68,7 +68,7 @@ export default function Sidebar() {
             end={item.end}
             className={({ isActive }) =>
               `rounded-lg px-3 py-2 text-sm transition-colors ${
-                isActive ? 'bg-[#8b5cf615] text-accent' : 'text-text hover:bg-[#ffffff08]'
+                isActive ? 'bg-[#a3e63615] text-accent' : 'text-text hover:bg-[#ffffff08]'
               }`
             }
           >
