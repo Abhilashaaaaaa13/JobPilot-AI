@@ -70,7 +70,7 @@ export default function EmailPanel({ company, autoDraft = false, onSent }) {
 
   if (sent) {
     return (
-      <div className="rounded-lg bg-[#4ade8010] border border-success/30 p-3 text-sm text-success">
+      <div className="rounded-lg bg-[#34d39910] border border-success/30 p-3 text-sm text-success">
         ✅ Email sent — check the Tracker for details.
       </div>
     );
@@ -113,13 +113,13 @@ export default function EmailPanel({ company, autoDraft = false, onSent }) {
           </div>
         )}
         {draft.proposal && (
-          <div className="rounded bg-[#4ade8010] border-l-2 border-success p-2">
+          <div className="rounded bg-[#34d39910] border-l-2 border-success p-2">
             <b className="text-success uppercase">Proposal</b>
             <p className="mt-1 text-text/80 line-clamp-3">{draft.proposal}</p>
           </div>
         )}
         {draft.why_fits && (
-          <div className="rounded bg-[#e8ff4710] border border-accent/20 p-2">
+          <div className="rounded bg-[#8b5cf610] border border-accent/20 p-2">
             <b className="text-accent uppercase">Why you</b>
             <p className="mt-1 text-text/80 line-clamp-3">{draft.why_fits}</p>
           </div>

@@ -34,15 +34,35 @@ Not "improve AI" but "no multi-language support" or
 Never write a vague gap like "could scale better" — name the actual missing
 capability a real user of their product would notice.
 
-STEP 2 - Propose a concrete solution using the candidate's real background
-Only use skills that appear in {user_skills} or {key_project} — never invent
-skills the candidate doesn't have.
+STEP 2 - Frame the fix as one of two things, never a vague offer to "help"
+Decide which fits the gap better:
+  (a) NEW FEATURE — something {company_name} doesn't have at all yet, built
+      from scratch to close the gap.
+  (b) EXISTING FEATURE UPGRADE — something they clearly already have (visible
+      from {one_liner}/{company_description}/{tech_stack}) that you'd extend
+      or rebuild to fix the specific weakness.
+Name which one it is implicitly through the wording — never write the words
+"new feature" or "existing feature" literally, just make the proposal read
+as one of those two shapes.
+Only use skills that actually appear in {user_skills} or {key_project} —
+never invent skills the candidate doesn't have, and never list skills as a
+bio ("I am a Python developer with experience in..."). Every mention of a
+skill must be doing work — it's the tool used to build THIS specific fix,
+not a resume recitation.
 "I can build X using Y in about Z weeks."
 If you know their tech stack, match your proposal to it.
 
-STEP 3 - Connect to key project as proof
-Reference {key_project} specifically — what it did and what result it had.
+STEP 3 - Connect to key project as proof, not as a second bio
+Reference {key_project} specifically — what it did and what result it had —
+only to show this exact kind of fix has worked before in the candidate's
+hands. It is evidence for the proposal, not a summary of the candidate.
 "I did something similar — [key project], which [concrete outcome]."
+
+Absolute rule: the email must never read like an introduction of the
+candidate ("Hi, I'm a final-year CS student with a background in...",
+"I have experience in ML and web development"). If you can delete a
+sentence and the proposal still makes sense, delete it — every line must
+either name the gap, describe the fix, or prove it's worked before.
 
 Email structure:
 Line 1-2: Hook — a specific, plausible observation about their product's gap

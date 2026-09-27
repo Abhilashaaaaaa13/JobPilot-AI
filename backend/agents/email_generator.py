@@ -66,13 +66,45 @@ def _get_resume_path_from_db(user_id: int) -> str:
     return ""
 
 
+def _get_saved_profile_fields(user_id: int) -> dict:
+    """Skills/name the user already confirmed during onboarding (UserProfile) —
+    richer and more reliable than re-extracting from raw PDF text on every
+    email, since onboarding parses the full resume with more room to work."""
+    try:
+        from backend.database    import SessionLocal
+        from backend.models.user import UserProfile
+
+        db      = SessionLocal()
+        profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
+        db.close()
+
+        if not profile:
+            return {}
+        return {
+            "name"  : profile.name or "",
+            "skills": json.loads(profile.skills) if profile.skills else [],
+        }
+    except Exception as e:
+        logger.warning(f"Saved profile fields fetch error: {e}")
+        return {}
+
+
 def get_user_info(user_id: int) -> dict:
-    """Extract name/skills/key_project from the resume via Groq."""
+    """Assemble name/skills/key_project for the email prompt.
+
+    Name and skills come from the profile saved at onboarding when available
+    (a full, considered extraction) rather than re-deriving a thin list from
+    a truncated PDF read on every single email. key_project has nowhere else
+    to live, so it's still pulled fresh from the resume each time — with
+    enough detail (what was built, with what, what it achieved) that the
+    email prompt can reference something concrete instead of a generic line.
+    """
     resume_path = _get_resume_path_from_db(user_id)
+    saved       = _get_saved_profile_fields(user_id)
 
     _default = {
-        "name"       : "Candidate",
-        "skills"     : [],
+        "name"       : saved.get("name") or "Candidate",
+        "skills"     : saved.get("skills") or [],
         "key_project": "",
         "resume_path": resume_path,
     }
@@ -102,24 +134,34 @@ def get_user_info(user_id: int) -> dict:
                     "role"   : "system",
                     "content": (
                         "Extract from this resume and return ONLY a single-line JSON object. "
-                        "No newlines inside values. No markdown. Exact format:\n"
-                        '{"name":"John Doe","skills":["Python","FastAPI"],"key_project":"Built RAG chatbot"}'
+                        "No newlines inside values. No markdown. "
+                        "key_project must be the single most impressive/relevant project: "
+                        "what it does, the concrete tech stack used, and a measurable result if stated. "
+                        "One sentence, specific — never a vague summary. Exact format:\n"
+                        '{"name":"John Doe","skills":["Python","FastAPI"],'
+                        '"key_project":"Built a RAG chatbot with LangChain + Pinecone that cut support response time 40%"}'
                     )
                 },
                 {
                     "role"   : "user",
-                    "content": f"Resume:\n{resume_text[:2500]}"
+                    "content": f"Resume:\n{resume_text[:3500]}"
                 }
             ],
-            max_tokens  = 500,
+            max_tokens  = 600,
             temperature = 0.1,
             reasoning_effort = "low",
         )
         raw    = res.choices[0].message.content.strip()
         parsed = _parse(raw)
+
+        # Prefer the richer saved-profile values; only fall back to this
+        # fresh extraction if onboarding never captured them.
+        skills = saved.get("skills") or parsed.get("skills", [])
+        name   = saved.get("name") or parsed.get("name", "Candidate")
+
         return {
-            "name"       : parsed.get("name",        "Candidate"),
-            "skills"     : parsed.get("skills",      []),
+            "name"       : name,
+            "skills"     : skills,
             "key_project": parsed.get("key_project", ""),
             "resume_path": resume_path,
         }
