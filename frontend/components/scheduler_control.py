@@ -60,7 +60,7 @@ def render_scheduler_controls(compact: bool = False):
         with col_dot:
             if running:
                 st.markdown(
-                    '<p style="color:#4ade80;font-size:11px;font-family:\'Space Mono\',monospace;margin:6px 0 0 0">🟢 Scheduler on</p>',
+                    '<p style="color:#16a34a;font-size:11px;font-family:\'Space Mono\',monospace;margin:6px 0 0 0">🟢 Scheduler on</p>',
                     unsafe_allow_html=True,
                 )
             else:
@@ -82,7 +82,7 @@ def render_scheduler_controls(compact: bool = False):
 
     if running:
         st.markdown(
-            '<p style="color:#4ade80;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">🟢 SCHEDULER ON</p>'
+            '<p style="color:#16a34a;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">🟢 SCHEDULER ON</p>'
             '<p style="color:#555;font-size:10px;margin:2px 0">Auto reply-check, follow-ups & Sheets sync running</p>',
             unsafe_allow_html=True,
         )
@@ -91,7 +91,7 @@ def render_scheduler_controls(compact: bool = False):
             st.rerun()
     else:
         st.markdown(
-            '<p style="color:#f87171;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">🔴 SCHEDULER OFF</p>'
+            '<p style="color:#dc2626;font-size:11px;font-family:\'Space Mono\',monospace;margin:0">🔴 SCHEDULER OFF</p>'
             '<p style="color:#555;font-size:10px;margin:2px 0">No auto reply-check / follow-ups / Sheets sync</p>',
             unsafe_allow_html=True,
         )

@@ -107,19 +107,19 @@ export default function EmailPanel({ company, autoDraft = false, onSent }) {
 
       <div className="grid grid-cols-3 gap-2 text-xs">
         {draft.gap && (
-          <div className="rounded bg-[#ff6b3510] border-l-2 border-[#ff6b35] p-2">
-            <b className="text-[#ff6b35] uppercase">Gap</b>
+          <div className="rounded bg-[#ea580c14] border-l-2 border-[#ea580c] p-2">
+            <b className="text-[#ea580c] uppercase">Gap</b>
             <p className="mt-1 text-text/80 line-clamp-3">{draft.gap}</p>
           </div>
         )}
         {draft.proposal && (
-          <div className="rounded bg-[#34d39910] border-l-2 border-success p-2">
+          <div className="rounded bg-[#16a34a14] border-l-2 border-success p-2">
             <b className="text-success uppercase">Proposal</b>
             <p className="mt-1 text-text/80 line-clamp-3">{draft.proposal}</p>
           </div>
         )}
         {draft.why_fits && (
-          <div className="rounded bg-[#a3e63610] border border-accent/20 p-2">
+          <div className="rounded bg-[#58811214] border border-accent/25 p-2">
             <b className="text-accent uppercase">Why you</b>
             <p className="mt-1 text-text/80 line-clamp-3">{draft.why_fits}</p>
           </div>

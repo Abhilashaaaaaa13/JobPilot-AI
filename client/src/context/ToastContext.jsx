@@ -30,9 +30,9 @@ export function ToastProvider({ children }) {
             key={t.id}
             className={`rounded-lg border px-4 py-3 text-sm font-mono shadow-lg ${
               t.type === 'success'
-                ? 'bg-[#4ade8015] border-success text-success'
+                ? 'bg-[#16a34a12] border-success text-success'
                 : t.type === 'error'
-                ? 'bg-[#f8717115] border-danger text-danger'
+                ? 'bg-[#dc262612] border-danger text-danger'
                 : 'bg-surface border-border text-text'
             }`}
           >
