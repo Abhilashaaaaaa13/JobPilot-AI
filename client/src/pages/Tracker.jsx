@@ -25,6 +25,10 @@ export default function Tracker() {
   useEffect(() => {
     load();
     api.getSheetsLink().then((res) => setSheetsUrl(res.url)).catch(() => setSheetsUrl(null));
+    // Auto-refresh so replies/follow-ups the scheduler picks up in the
+    // background actually show up here without a manual reload.
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
   }, []);
 
   async function handleCheckReplies() {

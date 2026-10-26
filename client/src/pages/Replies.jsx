@@ -17,6 +17,10 @@ export default function Replies() {
 
   useEffect(() => {
     loadAll();
+    // Auto-refresh so replies the scheduler detects in the background show
+    // up here without a manual reload.
+    const id = setInterval(loadAll, 30000);
+    return () => clearInterval(id);
   }, []);
 
   async function handleCheckNow() {
