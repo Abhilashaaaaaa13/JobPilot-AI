@@ -16,6 +16,8 @@ export default function Profile() {
   const [skillsText, setSkillsText] = useState('');
   const [gmailAddress, setGmailAddress] = useState('');
   const [gmailPassword, setGmailPassword] = useState('');
+  const [sheetsId, setSheetsId] = useState('');
+  const [serviceAccountEmail, setServiceAccountEmail] = useState('');
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef(null);
@@ -30,10 +32,12 @@ export default function Profile() {
     setRolesText(p.target_roles.join(', '));
     setSkillsText(p.skills.join(', '));
     setGmailAddress(p.gmail_address);
+    setSheetsId(p.sheets_id);
   }
 
   useEffect(() => {
     load();
+    api.getServiceAccountEmail().then((res) => setServiceAccountEmail(res.email)).catch(() => {});
   }, []);
 
   async function handleUpload(e) {
@@ -83,6 +87,7 @@ export default function Profile() {
         skills: skillsText.split(',').map((s) => s.trim()).filter(Boolean),
         gmail_address: gmailAddress || undefined,
         gmail_app_password: gmailPassword || undefined,
+        sheets_id: sheetsId,
       });
       toast.success('Profile saved!');
       setGmailPassword('');
@@ -183,6 +188,27 @@ export default function Profile() {
             onChange={(e) => setGmailPassword(e.target.value)}
           />
         </div>
+      </section>
+
+      {/* Step 5 — Google Sheets (optional) */}
+      <section className="card p-5 mb-6">
+        <p className="step-label">Step 5 — Google Sheets tracking (optional)</p>
+        <p className="text-xs text-muted mb-3">
+          Leave this blank to share the app's default tracker sheet. Paste your own Google
+          Sheet's ID here (the long string in its URL, between <code>/d/</code> and <code>/edit</code>)
+          to keep your outreach tracked in a sheet only you can see — otherwise every account
+          logs into the same shared sheet.
+        </p>
+        {serviceAccountEmail && (
+          <p className="text-xs text-muted mb-3">
+            Share your sheet as <b>Editor</b> with:{' '}
+            <code className="text-text">{serviceAccountEmail}</code>
+          </p>
+        )}
+        <input
+          className="input-field" placeholder="e.g. 1bYa4Y4-O--sJ99fk5n1EMcFI772wfL70DfVgo5JlNvU"
+          value={sheetsId} onChange={(e) => setSheetsId(e.target.value)}
+        />
       </section>
 
       <button onClick={handleSave} disabled={saving} className="btn-primary w-full">

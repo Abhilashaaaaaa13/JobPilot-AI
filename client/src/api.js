@@ -54,6 +54,7 @@ export const api = {
 
   getProfile: () => request('/profile'),
   updateProfile: (body) => request('/profile', { method: 'PUT', body }),
+  getServiceAccountEmail: () => request('/profile/service-account-email'),
   uploadResume: (file) => {
     const form = new FormData();
     form.append('file', file);

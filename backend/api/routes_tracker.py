@@ -15,8 +15,8 @@ def sent_emails(user: User = Depends(get_current_user)):
 
 @router.get("/sheets-link")
 def sheets_link(user: User = Depends(get_current_user)):
-    import os
-    sheets_id = os.getenv("GOOGLE_SHEETS_ID", "")
+    from backend.utils.sheets_tracker import _resolve_sheets_id
+    sheets_id = _resolve_sheets_id(user.id)
     if not sheets_id:
         return {"url": None}
     return {"url": f"https://docs.google.com/spreadsheets/d/{sheets_id}"}

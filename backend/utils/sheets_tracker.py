@@ -17,11 +17,32 @@ except ImportError:
     GSPREAD_AVAILABLE = False
     logger.warning("gspread not installed — Sheets tracking disabled")
 
-SHEETS_ID            = os.getenv("GOOGLE_SHEETS_ID",            "")
+DEFAULT_SHEETS_ID    = os.getenv("GOOGLE_SHEETS_ID",            "")
 SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "credentials.json")
 
 TAB_COLD_OUTREACH = "Cold Outreach"
 TAB_FOLLOWUPS     = "Follow Ups"
+
+
+def _resolve_sheets_id(user_id: int) -> str:
+    """Each user can point tracking at their own Sheet (UserProfile.sheets_id);
+    otherwise it falls back to the single sheet configured in .env. Without
+    this, every account — even ones that aren't Abhilasha's — would log into
+    the same shared sheet with no way to tell whose row is whose."""
+    try:
+        from backend.database    import SessionLocal
+        from backend.models.user import UserProfile
+
+        db      = SessionLocal()
+        profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
+        db.close()
+
+        if profile and profile.sheets_id:
+            return profile.sheets_id.strip()
+    except Exception as e:
+        logger.warning(f"Could not look up per-user sheets_id: {e}")
+
+    return DEFAULT_SHEETS_ID
 
 
 # ─────────────────────────────────────────────
@@ -53,9 +74,9 @@ def get_sheets_client():
 # GET OR CREATE WORKSHEET
 # ─────────────────────────────────────────────
 
-def get_or_create_sheet(client, tab_name: str):
+def get_or_create_sheet(client, tab_name: str, sheets_id: str):
     try:
-        spreadsheet = client.open_by_key(SHEETS_ID)
+        spreadsheet = client.open_by_key(sheets_id)
 
         try:
             return spreadsheet.worksheet(tab_name)
@@ -127,7 +148,8 @@ def log_cold_email(
     gap          : str,
     proposal     : str
 ) -> bool:
-    if not SHEETS_ID:
+    sheets_id = _resolve_sheets_id(user_id)
+    if not sheets_id:
         logger.warning("GOOGLE_SHEETS_ID missing — skip")
         return False
 
@@ -136,7 +158,7 @@ def log_cold_email(
         return False
 
     try:
-        ws = get_or_create_sheet(client, TAB_COLD_OUTREACH)
+        ws = get_or_create_sheet(client, TAB_COLD_OUTREACH, sheets_id)
         if not ws:
             return False
 
@@ -176,7 +198,8 @@ def update_reply_status(
     reply_body   : str,
     tab_name     : str = TAB_COLD_OUTREACH
 ) -> bool:
-    if not SHEETS_ID:
+    sheets_id = _resolve_sheets_id(user_id)
+    if not sheets_id:
         return False
 
     client = get_sheets_client()
@@ -184,7 +207,7 @@ def update_reply_status(
         return False
 
     try:
-        ws = get_or_create_sheet(client, tab_name)
+        ws = get_or_create_sheet(client, tab_name, sheets_id)
         if not ws:
             return False
 
@@ -253,7 +276,8 @@ def log_followup(
     new_value       : str,
     tab_name        : str = TAB_COLD_OUTREACH
 ) -> bool:
-    if not SHEETS_ID:
+    sheets_id = _resolve_sheets_id(user_id)
+    if not sheets_id:
         return False
 
     client = get_sheets_client()
@@ -262,7 +286,7 @@ def log_followup(
 
     try:
         # 1 — Log to the Followups tab
-        fu_ws = get_or_create_sheet(client, TAB_FOLLOWUPS)
+        fu_ws = get_or_create_sheet(client, TAB_FOLLOWUPS, sheets_id)
         if fu_ws:
             fu_ws.append_row([
                 datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
@@ -275,7 +299,7 @@ def log_followup(
             ])
 
         # 2 — Update the original row
-        ws = get_or_create_sheet(client, tab_name)
+        ws = get_or_create_sheet(client, tab_name, sheets_id)
         if not ws:
             logger.warning(
                 f"Could not open tab '{tab_name}' — skipping row update"

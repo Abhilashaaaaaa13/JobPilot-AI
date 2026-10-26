@@ -18,7 +18,7 @@ def _profile_dict(profile: UserProfile | None) -> dict:
             "one_liner": "", "preferred_type": "job", "target_roles": [],
             "target_industries": [], "skills": [], "gmail_address": "",
             "gmail_connected": False, "resume_uploaded": False, "resume_filename": "",
-            "experience_years": 0, "education": "", "name": "",
+            "experience_years": 0, "education": "", "name": "", "sheets_id": "",
         }
     return {
         "one_liner": profile.one_liner or "",
@@ -33,7 +33,21 @@ def _profile_dict(profile: UserProfile | None) -> dict:
         "experience_years": profile.experience_years or 0,
         "education": profile.education or "",
         "name": profile.name or "",
+        "sheets_id": profile.sheets_id or "",
     }
+
+
+@router.get("/service-account-email")
+def service_account_email(user: User = Depends(get_current_user)):
+    """The Google service-account email a user must grant Editor access to
+    on their own Sheet before pointing sheets_id at it."""
+    import json as _json
+    path = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "credentials.json")
+    try:
+        with open(path) as f:
+            return {"email": _json.load(f).get("client_email", "")}
+    except Exception:
+        return {"email": ""}
 
 
 @router.get("")
@@ -55,6 +69,7 @@ class ProfileUpdate(BaseModel):
     location: str | None = None
     gmail_address: str | None = None
     gmail_app_password: str | None = None
+    sheets_id: str | None = None
 
 
 @router.put("")
@@ -82,6 +97,8 @@ def update_profile(body: ProfileUpdate, user: User = Depends(get_current_user)):
             profile.gmail_address = body.gmail_address.strip()
         if body.gmail_app_password:
             profile.gmail_app_password = body.gmail_app_password.replace(" ", "")
+        if body.sheets_id is not None:
+            profile.sheets_id = body.sheets_id.strip()
 
         db.commit()
         db.refresh(profile)
