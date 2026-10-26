@@ -5,12 +5,13 @@ import { useToast } from '../context/ToastContext';
 const STATUS_STYLE = {
   replied: 'text-success border-success/30 bg-success/10',
   followup_sent: 'text-warning border-warning/30 bg-warning/10',
-  awaiting: 'text-muted border-border bg-white/5',
+  awaiting: 'text-muted border-border bg-black/4',
 };
 const STATUS_LABEL = { replied: '📩 Replied', followup_sent: '🔄 Follow Up', awaiting: '⏳ Awaiting' };
 
 export default function Tracker() {
   const [emails, setEmails] = useState(null);
+  const [sheetsUrl, setSheetsUrl] = useState(undefined);
   const [filter, setFilter] = useState('all');
   const [checking, setChecking] = useState(false);
   const [sendingFollowups, setSendingFollowups] = useState(false);
@@ -23,6 +24,7 @@ export default function Tracker() {
 
   useEffect(() => {
     load();
+    api.getSheetsLink().then((res) => setSheetsUrl(res.url)).catch(() => setSheetsUrl(null));
   }, []);
 
   async function handleCheckReplies() {
@@ -97,6 +99,20 @@ export default function Tracker() {
           <option value="followup_sent">🔄 Follow Up Sent</option>
         </select>
       </div>
+
+      {sheetsUrl && (
+        <a
+          href={sheetsUrl} target="_blank" rel="noreferrer"
+          className="inline-block mb-4 text-sm text-accent hover:underline"
+        >
+          📊 Full tracker in Google Sheets ↗
+        </a>
+      )}
+      {sheetsUrl === null && (
+        <p className="mb-4 text-xs text-muted">
+          Add GOOGLE_SHEETS_ID to .env to enable Google Sheets tracking.
+        </p>
+      )}
 
       {filtered.length === 0 ? (
         <div className="card p-8 text-center text-muted">No emails sent yet.</div>

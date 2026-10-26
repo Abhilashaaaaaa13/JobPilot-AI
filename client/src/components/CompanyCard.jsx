@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import EmailPanel from './EmailPanel';
 
-const SOURCE_ICONS = {
-  yc_api: '🟠 YC', betalist: '🟣 BL', product_hunt: '🔴 PH',
-  indie_hackers: '🟢 IH', github_trending: '⚫ GH', hn_hiring: '🟡 HN',
+// Just a color dot per source — no "PH"/"GH"/"HN" text abbreviations, those
+// read as noise next to the actual company name.
+const SOURCE_DOTS = {
+  yc_api: '🟠', betalist: '🟣', product_hunt: '🔴',
+  indie_hackers: '🟢', github_trending: '⚫', hn_hiring: '🟡',
 };
 
 function shortUrl(url) {
@@ -11,11 +13,11 @@ function shortUrl(url) {
   return url.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '').split('/')[0];
 }
 
-export default function CompanyCard({ company, defaultOpen = false, autoDraft = false, onSent }) {
+export default function CompanyCard({ company, defaultOpen = false, autoDraft = false, isNew = false, onSent }) {
   const [open, setOpen] = useState(defaultOpen);
   const contacts = company.contacts || [];
   const bestEmail = contacts.find((c) => c.email && c.verified) || contacts.find((c) => c.email);
-  const src = SOURCE_ICONS[company.source] || '⚪';
+  const src = SOURCE_DOTS[company.source] || '⚪';
 
   return (
     <div className="card overflow-hidden">
@@ -25,9 +27,25 @@ export default function CompanyCard({ company, defaultOpen = false, autoDraft = 
       >
         <div className="min-w-0">
           <p className="font-medium truncate">
-            {src} <span className="font-mono">{company.name}</span>{' '}
+            {src} <span className="font-mono">{company.name}</span>
+            {isNew && (
+              <span className="ml-2 text-[10px] font-mono uppercase bg-accent-bright/20 text-accent px-1.5 py-0.5 rounded">
+                New
+              </span>
+            )}{' '}
             <span className="text-muted text-xs">· {company.funding || '?'}</span>
             {company.github_stars ? <span className="text-xs text-muted"> · ⭐ {company.github_stars}</span> : null}
+            {company.website && (
+              <a
+                href={company.website}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="ml-2 text-xs text-accent hover:underline"
+              >
+                🔗 {shortUrl(company.website)}
+              </a>
+            )}
           </p>
           {company.one_liner && <p className="text-xs text-muted truncate mt-0.5">{company.one_liner}</p>}
         </div>

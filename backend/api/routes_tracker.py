@@ -13,6 +13,15 @@ def sent_emails(user: User = Depends(get_current_user)):
     return {"emails": get_sent_log(user.id)}
 
 
+@router.get("/sheets-link")
+def sheets_link(user: User = Depends(get_current_user)):
+    import os
+    sheets_id = os.getenv("GOOGLE_SHEETS_ID", "")
+    if not sheets_id:
+        return {"url": None}
+    return {"url": f"https://docs.google.com/spreadsheets/d/{sheets_id}"}
+
+
 @router.post("/check-replies")
 def check_replies(user: User = Depends(get_current_user)):
     from backend.pipeline.reply_handler import ReplyDetector, ReplyStorage, AutoDraftGenerator, NotificationManager

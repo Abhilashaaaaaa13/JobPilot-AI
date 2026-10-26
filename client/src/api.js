@@ -69,6 +69,7 @@ export const api = {
   skipCompany: (companyId) => request(`/companies/${companyId}/skip`, { method: 'POST' }),
 
   getSentEmails: () => request('/tracker/sent-emails'),
+  getSheetsLink: () => request('/tracker/sheets-link'),
   checkReplies: () => request('/tracker/check-replies', { method: 'POST' }),
   sendFollowups: () => request('/tracker/send-followups', { method: 'POST' }),
 
